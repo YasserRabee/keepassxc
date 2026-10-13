@@ -223,7 +223,7 @@ namespace FdoSecrets
 
         /**
          * Give a new client the decisions remembered by rememberForParent, if it runs the
-         * same executable and one of its ancestors is a still running parent with decisions.
+         * same executable and its direct parent is the same, still running, process.
          */
         void applyParentDecisions(DBusClient& client);
 

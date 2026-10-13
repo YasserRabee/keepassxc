@@ -653,17 +653,10 @@ namespace FdoSecrets
 
     bool DBusMgr::ParentDecisions::appliesTo(const PeerInfo& info) const
     {
-        if (info.exePath() != exePath) {
-            return false;
-        }
-        // any ancestor, e.g. the script's shell when the client runs in a subshell
-        for (int i = 1; i < info.hierarchy.size(); ++i) {
-            const auto& proc = info.hierarchy.at(i);
-            if (proc.pid == parentPid && proc.startTime == parentStartTime) {
-                return true;
-            }
-        }
-        return false;
+        // only the direct parent counts, so programs started by other programs under it still ask
+        auto parent = info.rememberParent();
+        return parent && parent->pid == parentPid && parent->startTime == parentStartTime
+               && info.exePath() == exePath;
     }
 
     void DBusMgr::rememberForParent(const DBusClient& client,
@@ -676,27 +669,22 @@ namespace FdoSecrets
             return;
         }
 
-        ParentDecisions* pd = nullptr;
-        for (auto& existing : m_parentDecisions) {
-            if (existing.parentPid == parent->pid && existing.parentStartTime == parent->startTime
-                && existing.exePath == info.exePath()) {
-                pd = &existing;
-                break;
-            }
-        }
-        if (!pd) {
-            m_parentDecisions.append({parent->pid, parent->startTime, info.exePath(), AuthDecision::Undecided, {}});
-            pd = &m_parentDecisions.last();
+        auto it = std::find_if(m_parentDecisions.begin(), m_parentDecisions.end(), [&info](const ParentDecisions& pd) {
+            return pd.appliesTo(info);
+        });
+        if (it == m_parentDecisions.end()) {
+            it = m_parentDecisions.insert(
+                it, {parent->pid, parent->startTime, info.exePath(), AuthDecision::Undecided, {}});
         }
 
         // once decisions stay with the client
         auto remembered = [](AuthDecision d) { return d == AuthDecision::Allowed || d == AuthDecision::Denied; };
         if (remembered(forFutureEntries)) {
-            pd->all = forFutureEntries;
+            it->all = forFutureEntries;
         }
-        for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
-            if (remembered(it.value())) {
-                pd->items.insert(it.key(), it.value());
+        for (auto d = decisions.constBegin(); d != decisions.constEnd(); ++d) {
+            if (remembered(d.value())) {
+                it->items.insert(d.key(), d.value());
             }
         }
     }
@@ -707,20 +695,15 @@ namespace FdoSecrets
         m_parentDecisions.removeIf(
             [](const ParentDecisions& pd) { return readProc(pd.parentPid).startTime != pd.parentStartTime; });
 
-        const auto& info = client.processInfo();
-        // farthest ancestor first, so decisions tied to a nearer parent win
-        for (auto i = info.hierarchy.size() - 1; i >= 1; --i) {
-            const auto& proc = info.hierarchy.at(i);
-            for (const auto& pd : asConst(m_parentDecisions)) {
-                if (pd.parentPid != proc.pid || pd.parentStartTime != proc.startTime || pd.exePath != info.exePath()) {
-                    continue;
-                }
-                if (pd.all != AuthDecision::Undecided) {
-                    client.setAllAuthorized(pd.all);
-                }
-                for (auto it = pd.items.constBegin(); it != pd.items.constEnd(); ++it) {
-                    client.setItemAuthorized(it.key(), it.value());
-                }
+        for (const auto& pd : asConst(m_parentDecisions)) {
+            if (!pd.appliesTo(client.processInfo())) {
+                continue;
+            }
+            if (pd.all != AuthDecision::Undecided) {
+                client.setAllAuthorized(pd.all);
+            }
+            for (auto it = pd.items.constBegin(); it != pd.items.constEnd(); ++it) {
+                client.setItemAuthorized(it.key(), it.value());
             }
         }
     }

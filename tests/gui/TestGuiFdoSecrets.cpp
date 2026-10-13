@@ -922,9 +922,10 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberParent()
     // but only for the entry the user decided on
     VERIFY(!later->itemKnown(QUuid::createUuid()));
 
-    // also when started from a subshell of the parent
-    const ProcInfo subshell{7654321, parent.pid, QStringLiteral("/usr/bin/bash"), QStringLiteral("bash"), {}, 1};
-    VERIFY(makeClient(glab, {subshell, parent})->itemAuthorized(uuid));
+    // only the direct parent counts: glab started by another program under the parent
+    // (e.g. an npm install script run from the same shell) still asks
+    const ProcInfo npm{7654321, parent.pid, QStringLiteral("/usr/bin/sh"), QStringLiteral("sh"), {}, 1};
+    VERIFY(!makeClient(glab, {npm, parent})->itemKnown(uuid));
 
     // another executable under the same parent still asks
     VERIFY(!makeClient(QStringLiteral("/usr/bin/python3"), {parent})->itemKnown(uuid));

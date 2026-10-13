@@ -82,7 +82,12 @@ py='python3 -I /test/gokeyring_like.py'
 # The trailing ':' stops bash from exec-ing the last command in place of itself.
 run_case "1. one script, 3 runs of the same program -> one prompt" 1 allow "$look; $look; $look; :"
 run_case "1b. go-keyring style: one process, 3 connections -> one prompt" 1 allow "$py lookups 3; :"
-run_case "1c. subshell of the script is covered too" 1 allow "$look; ( $look ); echo \"  \$($look)\"; :"
+# bash runs these directly, so their parent is the script itself
+forms='x=$(secret-tool lookup service glab) && echo "  \$(secret-tool): got secret" || echo "  \$(secret-tool): NO SECRET"
+secret-tool lookup service glab | grep -q . && echo "  secret-tool | grep: got secret" || echo "  secret-tool | grep: NO SECRET"
+( cd /tmp; secret-tool lookup service glab ) >/dev/null && echo "  ( cd; secret-tool ): got secret" || echo "  ( cd; secret-tool ): NO SECRET"'
+run_case "1c. \$(cmd), pipelines and ( cd x; cmd ) in the script are covered" 1 allow "$look; $forms; :"
+run_case "1d. started by another program under the script (like an npm install script) asks again" 2 allow "$look; sh -c '$look'; :"
 run_case "2. another program under the same parent still prompts" 2 allow "$look; $look; $copy; $copy; :"
 run_case "3a. script run #1" 1 allow "$look; $look; :"
 run_case "3b. script run #2 (new parent; run #1 has exited) prompts again" 1 allow "$look; $look; :"
