@@ -36,6 +36,9 @@ class TestFdoSecrets;
 
 namespace FdoSecrets
 {
+    // read /proc, each field except pid may be empty
+    ProcInfo readProc(uint pid);
+
     class Collection;
     class Service;
     class PromptBase;
@@ -209,6 +212,26 @@ namespace FdoSecrets
         // Force client to be a specific object, used for testing
         void overrideClient(const DBusClientPtr& fake);
 
+        /**
+         * Remember the user's decisions for later clients that run the same executable
+         * as @a client under its direct parent process, while that parent runs.
+         * Only remembered (not once) decisions are kept. Nothing is saved to disk.
+         */
+        void rememberForParent(const DBusClient& client,
+                               const QHash<QUuid, AuthDecision>& decisions,
+                               AuthDecision forFutureEntries);
+
+        /**
+         * Give a new client the decisions remembered by rememberForParent, if it runs the
+         * same executable and one of its ancestors is a still running parent with decisions.
+         */
+        void applyParentDecisions(DBusClient& client);
+
+        /**
+         * Forget decisions remembered by rememberForParent that would apply to @a client.
+         */
+        void forgetParentDecisions(const DBusClient& client);
+
     signals:
         void clientConnected(const DBusClientPtr& client);
         void clientDisconnected(const DBusClientPtr& client);
@@ -325,6 +348,19 @@ namespace FdoSecrets
         QHash<QString, DBusClientPtr> m_clients{};
 
         DBusClientPtr m_overrideClient;
+
+        // decisions remembered for processes started by a parent, see rememberForParent
+        struct ParentDecisions
+        {
+            uint parentPid;
+            quint64 parentStartTime;
+            QString exePath;
+            AuthDecision all;
+            QHash<QUuid, AuthDecision> items;
+
+            bool appliesTo(const PeerInfo& info) const;
+        };
+        QList<ParentDecisions> m_parentDecisions{};
 
         friend class ::TestFdoSecrets;
     };

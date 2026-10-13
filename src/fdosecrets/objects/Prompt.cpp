@@ -455,6 +455,9 @@ namespace FdoSecrets
         if (forFutureEntries != AuthDecision::Undecided) {
             client->setAllAuthorized(forFutureEntries);
         }
+        if (auto dbus = client->dbus()) {
+            dbus->rememberForParent(*client, decisions, forFutureEntries);
+        }
         // if anything is not unlocked, treat the whole prompt as dismissed
         // so the client has a chance to handle the error
         finishPrompt(m_numRejected > 0);

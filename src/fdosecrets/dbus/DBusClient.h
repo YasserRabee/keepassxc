@@ -37,6 +37,12 @@ namespace FdoSecrets
         QString exePath;
         QString name;
         QString command;
+        /**
+         * @brief Start time (field 22 of /proc/pid/stat), 0 if unknown.
+         *
+         * Together with pid this identifies a process, as a pid may be reused.
+         */
+        quint64 startTime{0};
 
         bool operator==(const ProcInfo& other) const;
         bool operator!=(const ProcInfo& other) const;
@@ -75,6 +81,16 @@ namespace FdoSecrets
         {
             return hierarchy.front().exePath;
         }
+
+        /**
+         * @brief The direct parent process that "Remember" decisions are tied to.
+         *
+         * Decisions remembered for this process also cover later processes with the same
+         * executable started under this parent, while it runs.
+         *
+         * @return nullptr if there is no usable parent (unknown, PID 1, or unknown executable).
+         */
+        const ProcInfo* rememberParent() const;
 
         bool operator==(const PeerInfo& other) const;
         bool operator!=(const PeerInfo& other) const;

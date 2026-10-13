@@ -242,6 +242,7 @@ void TestGuiFdoSecrets::cleanup()
     }
 
     m_client->clearAuthorization();
+    m_plugin->dbus()->overrideClient(m_client);
 }
 
 void TestGuiFdoSecrets::cleanupTestCase()
@@ -871,6 +872,90 @@ void TestGuiFdoSecrets::testServiceUnlockItemsConcurrentLock()
         auto unlockedResult = getSignalVariantArgument<QList<QDBusObjectPath>>(args.at(1));
         VERIFY(unlockedResult.isEmpty());
     }
+}
+
+void TestGuiFdoSecrets::testServiceUnlockItemsRememberParent()
+{
+    FdoSecrets::settings()->setConfirmAccessItem(true);
+
+    auto service = enableService();
+    VERIFY(service);
+    auto coll = getDefaultCollection(service);
+    VERIFY(coll);
+    auto item = getFirstItem(coll);
+    VERIFY(item);
+    auto dbus = m_plugin->dbus();
+    auto uuid = dbus->pathToObject<Item>(QDBusObjectPath(item->path()))->backend()->uuid();
+
+    // this test process plays the parent, e.g. the shell running a script
+    const auto parent = readProc(QCoreApplication::applicationPid());
+    VERIFY(parent.startTime != 0);
+    const auto glab = QStringLiteral("/usr/bin/glab");
+    auto makeClient = [&](const QString& exe, QList<ProcInfo> ancestors) {
+        ancestors.prepend(ProcInfo{1234567, ancestors.first().pid, exe, QFileInfo(exe).fileName(), exe, 1});
+        DBusClientPtr client(new DBusClient(dbus.data(), {QStringLiteral("local"), 1234567, true, ancestors}));
+        dbus->applyParentDecisions(*client);
+        return client;
+    };
+
+    // the first glab asks, the user allows the item and ticks Remember
+    auto first = makeClient(glab, {parent});
+    dbus->overrideClient(first);
+    {
+        DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
+        COMPARE(unlocked, {});
+        auto prompt = getProxy<PromptProxy>(promptPath);
+        VERIFY(prompt);
+        QSignalSpy spyPromptCompleted(prompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
+        VERIFY(spyPromptCompleted.isValid());
+        DBUS_VERIFY(prompt->Prompt(""));
+        VERIFY(driveAccessControlDialog(true));
+        VERIFY(waitForSignal(spyPromptCompleted, 1));
+        DBUS_COMPARE(item->locked(), false);
+    }
+    dbus->overrideClient(m_client);
+
+    // a later glab under the same parent gets the decision, so no prompt
+    auto later = makeClient(glab, {parent});
+    VERIFY(later->itemKnown(uuid));
+    VERIFY(later->itemAuthorized(uuid));
+    // but only for the entry the user decided on
+    VERIFY(!later->itemKnown(QUuid::createUuid()));
+
+    // also when started from a subshell of the parent
+    const ProcInfo subshell{7654321, parent.pid, QStringLiteral("/usr/bin/bash"), QStringLiteral("bash"), {}, 1};
+    VERIFY(makeClient(glab, {subshell, parent})->itemAuthorized(uuid));
+
+    // another executable under the same parent still asks
+    VERIFY(!makeClient(QStringLiteral("/usr/bin/python3"), {parent})->itemKnown(uuid));
+
+    // a new process that reuses the parent's pid does not count
+    auto reused = parent;
+    reused.startTime += 1;
+    VERIFY(!makeClient(glab, {reused})->itemKnown(uuid));
+
+    // nothing is tied to PID 1, which never exits
+    const ProcInfo init{1, 0, QStringLiteral("/sbin/init"), QStringLiteral("systemd"), {}, 1};
+    const auto wget = QStringLiteral("/usr/bin/wget");
+    dbus->rememberForParent(*makeClient(wget, {init}), {}, AuthDecision::Allowed);
+    VERIFY(!makeClient(wget, {init})->itemKnown(uuid));
+
+    // Deny All & Future is passed on too
+    const auto curl = QStringLiteral("/usr/bin/curl");
+    dbus->rememberForParent(*makeClient(curl, {parent}), {}, AuthDecision::Denied);
+    auto denied = makeClient(curl, {parent});
+    VERIFY(denied->itemKnown(uuid));
+    VERIFY(!denied->itemAuthorized(uuid));
+
+    // once decisions are not passed on
+    const auto tool = QStringLiteral("/usr/bin/secret-tool");
+    dbus->rememberForParent(*makeClient(tool, {parent}), {{uuid, AuthDecision::AllowedOnce}}, AuthDecision::Undecided);
+    VERIFY(!makeClient(tool, {parent})->itemKnown(uuid));
+
+    // Reset/Disconnect in the settings forgets them
+    dbus->forgetParentDecisions(*later);
+    VERIFY(!makeClient(glab, {parent})->itemKnown(uuid));
+    dbus->forgetParentDecisions(*denied);
 }
 
 void TestGuiFdoSecrets::testServiceLock()

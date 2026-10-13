@@ -76,6 +76,7 @@ private slots:
     void testServiceUnlockItems();
     void testServiceUnlockItemsIncludeFutureEntries();
     void testServiceUnlockItemsConcurrentLock();
+    void testServiceUnlockItemsRememberParent();
     void testServiceLock();
     void testServiceLockConcurrent();
 

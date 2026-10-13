@@ -29,12 +29,25 @@ namespace FdoSecrets
     bool ProcInfo::operator==(const ProcInfo& other) const
     {
         return this->pid == other.pid && this->ppid == other.ppid && this->exePath == other.exePath
-               && this->name == other.name && this->command == other.command;
+               && this->name == other.name && this->command == other.command && this->startTime == other.startTime;
     }
 
     bool ProcInfo::operator!=(const ProcInfo& other) const
     {
         return !(*this == other);
+    }
+
+    const ProcInfo* PeerInfo::rememberParent() const
+    {
+        if (hierarchy.size() < 2 || exePath().isEmpty()) {
+            return nullptr;
+        }
+        const auto& parent = hierarchy.at(1);
+        // PID 1 never exits, so tying a decision to it would cover the executable forever
+        if (parent.pid <= 1 || parent.startTime == 0) {
+            return nullptr;
+        }
+        return &parent;
     }
 
     bool PeerInfo::operator==(const PeerInfo& other) const

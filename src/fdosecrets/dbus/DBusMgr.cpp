@@ -172,7 +172,6 @@ namespace FdoSecrets
 </interface>
 )xml";
 
-    // read /proc, each field except pid may be empty
     ProcInfo readProc(uint pid)
     {
         ProcInfo info{};
@@ -200,7 +199,7 @@ namespace FdoSecrets
             info.command = QString::fromLocal8Bit(cmdline.readAll().replace('\0', ' ')).trimmed();
         }
 
-        // /proc/pid/stat gives ppid, name
+        // /proc/pid/stat gives ppid, name, start time
         QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
         if (stat.open(QIODevice::ReadOnly)) {
             auto line = stat.readAll();
@@ -214,6 +213,10 @@ namespace FdoSecrets
                 auto parts = line.mid(commEnd + 1).trimmed().split(' ');
                 if (parts.size() >= 2) {
                     info.ppid = parts[1].toUInt();
+                }
+                // parts start at field 3, so field 22 (starttime) is parts[19]
+                if (parts.size() >= 20) {
+                    info.startTime = parts[19].toULongLong();
                 }
             }
         }
@@ -640,11 +643,92 @@ namespace FdoSecrets
         }
 
         auto client = DBusClientPtr(new DBusClient(this, info));
+        applyParentDecisions(*client);
 
         emit clientConnected(client);
         m_watcher.addWatchedService(addr);
 
         return client;
+    }
+
+    bool DBusMgr::ParentDecisions::appliesTo(const PeerInfo& info) const
+    {
+        if (info.exePath() != exePath) {
+            return false;
+        }
+        // any ancestor, e.g. the script's shell when the client runs in a subshell
+        for (int i = 1; i < info.hierarchy.size(); ++i) {
+            const auto& proc = info.hierarchy.at(i);
+            if (proc.pid == parentPid && proc.startTime == parentStartTime) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void DBusMgr::rememberForParent(const DBusClient& client,
+                                    const QHash<QUuid, AuthDecision>& decisions,
+                                    AuthDecision forFutureEntries)
+    {
+        const auto& info = client.processInfo();
+        auto parent = info.rememberParent();
+        if (!parent) {
+            return;
+        }
+
+        ParentDecisions* pd = nullptr;
+        for (auto& existing : m_parentDecisions) {
+            if (existing.parentPid == parent->pid && existing.parentStartTime == parent->startTime
+                && existing.exePath == info.exePath()) {
+                pd = &existing;
+                break;
+            }
+        }
+        if (!pd) {
+            m_parentDecisions.append({parent->pid, parent->startTime, info.exePath(), AuthDecision::Undecided, {}});
+            pd = &m_parentDecisions.last();
+        }
+
+        // once decisions stay with the client
+        auto remembered = [](AuthDecision d) { return d == AuthDecision::Allowed || d == AuthDecision::Denied; };
+        if (remembered(forFutureEntries)) {
+            pd->all = forFutureEntries;
+        }
+        for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
+            if (remembered(it.value())) {
+                pd->items.insert(it.key(), it.value());
+            }
+        }
+    }
+
+    void DBusMgr::applyParentDecisions(DBusClient& client)
+    {
+        // drop decisions whose parent exited; a reused pid has a different start time
+        m_parentDecisions.removeIf(
+            [](const ParentDecisions& pd) { return readProc(pd.parentPid).startTime != pd.parentStartTime; });
+
+        const auto& info = client.processInfo();
+        // farthest ancestor first, so decisions tied to a nearer parent win
+        for (auto i = info.hierarchy.size() - 1; i >= 1; --i) {
+            const auto& proc = info.hierarchy.at(i);
+            for (const auto& pd : asConst(m_parentDecisions)) {
+                if (pd.parentPid != proc.pid || pd.parentStartTime != proc.startTime || pd.exePath != info.exePath()) {
+                    continue;
+                }
+                if (pd.all != AuthDecision::Undecided) {
+                    client.setAllAuthorized(pd.all);
+                }
+                for (auto it = pd.items.constBegin(); it != pd.items.constEnd(); ++it) {
+                    client.setItemAuthorized(it.key(), it.value());
+                }
+            }
+        }
+    }
+
+    void DBusMgr::forgetParentDecisions(const DBusClient& client)
+    {
+        m_parentDecisions.removeIf(
+            [&client](const ParentDecisions& pd) { return pd.appliesTo(client.processInfo()); });
     }
 
     void DBusMgr::removeClient(DBusClient* client)

@@ -20,6 +20,7 @@
 
 #include "fdosecrets/FdoSecretsPlugin.h"
 #include "fdosecrets/FdoSecretsSettings.h"
+#include "fdosecrets/dbus/DBusMgr.h"
 #include "fdosecrets/widgets/RowButtonHelper.h"
 #include "fdosecrets/widgets/SettingsModels.h"
 #include "objects/Service.h"
@@ -168,6 +169,7 @@ namespace
             disconnectAct->setToolTip(tr("Disconnect this application"));
             connect(disconnectAct, &QAction::triggered, this, [this]() {
                 if (m_client) {
+                    forgetParentDecisions();
                     m_client->disconnectDBus();
                 }
             });
@@ -177,6 +179,7 @@ namespace
             resetAct->setToolTip(tr("Reset any remembered decisions for this application"));
             connect(resetAct, &QAction::triggered, this, [this]() {
                 if (m_client) {
+                    forgetParentDecisions();
                     m_client->clearAuthorization();
                 }
             });
@@ -211,6 +214,14 @@ namespace
         }
 
     private:
+        // otherwise the app's next connection gets the decisions back
+        void forgetParentDecisions()
+        {
+            if (auto dbus = m_client->dbus()) {
+                dbus->forgetParentDecisions(*m_client);
+            }
+        }
+
         DBusClientPtr m_client{};
     };
 } // namespace

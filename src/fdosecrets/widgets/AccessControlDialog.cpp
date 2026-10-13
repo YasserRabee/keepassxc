@@ -27,6 +27,7 @@
 #include "core/Global.h"
 #include "gui/Icons.h"
 
+#include <QFileInfo>
 #include <QWindow>
 
 #include <functional>
@@ -80,9 +81,16 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
         m_ui->buttonBox->addButton(detailsButtonText + QStringLiteral(" >>"), QDialogButtonBox::HelpRole);
     detailsButton->setCheckable(true);
 
-    QString tooltip = QStringLiteral("<p align='justify'>%1</p>")
-                          .arg(tr("Your decision will be remembered for the duration while both the requesting client "
-                                  "AND KeePassXC are running."));
+    QString remember = tr("Your decision will be remembered for the duration while both the requesting client "
+                          "AND KeePassXC are running.");
+    if (auto parent = info.rememberParent()) {
+        remember = tr("Your decision will be remembered while both KeePassXC AND the parent process %1 (PID: %2) "
+                      "are running. It also covers other runs of %3 started by that process.")
+                       .arg(parent->name.toHtmlEscaped(),
+                            QString::number(parent->pid),
+                            QFileInfo(info.exePath()).fileName().toHtmlEscaped());
+    }
+    QString tooltip = QStringLiteral("<p align='justify'>%1</p>").arg(remember);
 
     m_rememberCheck = new QCheckBox(tr("Remember"), this);
     m_rememberCheck->setObjectName("rememberCheck"); // for testing
