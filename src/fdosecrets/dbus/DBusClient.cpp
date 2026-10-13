@@ -38,24 +38,38 @@ namespace FdoSecrets
         return !(*this == other);
     }
 
-    int PeerInfo::rememberAncestors() const
+    int PeerInfo::maxRememberDepth() const
     {
-        if (hierarchy.isEmpty() || exePath().isEmpty()) {
-            return 0;
+        // PID 1 never exits, so tying a decision to it would cover the executable forever
+        auto identified = [](const ProcInfo& proc) {
+            return proc.pid > 1 && proc.startTime != 0 && !proc.exePath.isEmpty();
+        };
+        // a pseudo terminal (/dev/pts/N, majors 136-143), not a console a compositor may run on
+        auto pty = [](int tty) {
+            auto major = (tty >> 8) & 0xfff;
+            return major >= 136 && major <= 143;
+        };
+        // a cgroup of its own, not "/" or a login session's systemd scope that holds everything
+        auto ownGroup = [](const QString& cgroup) {
+            auto name = cgroup.section('/', -1);
+            return !name.isEmpty() && !(name.startsWith("session-") && name.endsWith(".scope"));
+        };
+
+        if (hierarchy.isEmpty() || !identified(hierarchy.front())) {
+            return -1;
         }
         const auto& self = hierarchy.front();
-        int count = 0;
+        int depth = 0;
         for (int i = 1; i < hierarchy.size(); ++i) {
             const auto& proc = hierarchy.at(i);
-            auto sameTerminal = proc.tty != 0 && proc.tty == self.tty;
-            auto sameGroup = !proc.cgroup.isEmpty() && proc.cgroup != QLatin1String("/") && proc.cgroup == self.cgroup;
-            // PID 1 never exits, so tying a decision to it would cover the executable forever
-            if (proc.pid <= 1 || proc.startTime == 0 || proc.exePath.isEmpty() || !(sameTerminal || sameGroup)) {
+            auto sameTerminal = pty(proc.tty) && proc.tty == self.tty;
+            auto sameGroup = ownGroup(proc.cgroup) && proc.cgroup == self.cgroup;
+            if (!identified(proc) || !(sameTerminal || sameGroup)) {
                 break;
             }
-            count = i;
+            depth = i;
         }
-        return count;
+        return depth;
     }
 
     bool PeerInfo::operator==(const PeerInfo& other) const

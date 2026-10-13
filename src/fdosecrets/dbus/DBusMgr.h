@@ -214,9 +214,10 @@ namespace FdoSecrets
 
         /**
          * Remember the user's decisions for later clients that run the same executable and that
-         * the same, still running, ancestor of @a client (hierarchy[@a depth], at most
-         * PeerInfo::rememberAncestors()) starts the same way, through the same executables.
-         * Only remembered (not once) decisions are kept. Nothing is saved to disk.
+         * the same, still running, process starts the same way, through the same executables.
+         * That process is @a client's hierarchy[@a depth]: 0 is the client's process itself, up to
+         * PeerInfo::maxRememberDepth(). Only remembered (not once) decisions are kept.
+         * Nothing is saved to disk.
          */
         void rememberForAncestor(const DBusClient& client,
                                  int depth,
@@ -224,7 +225,8 @@ namespace FdoSecrets
                                  AuthDecision forFutureEntries);
 
         /**
-         * Give a new client the decisions remembered by rememberForAncestor that apply to it.
+         * Give a new client the decisions remembered by rememberForAncestor that apply to it. If
+         * several apply, only those tied to the nearest process.
          */
         void applyAncestorDecisions(DBusClient& client);
 
@@ -232,6 +234,11 @@ namespace FdoSecrets
          * Forget decisions remembered by rememberForAncestor that would apply to @a client.
          */
         void forgetAncestorDecisions(const DBusClient& client);
+
+        /**
+         * Forget all decisions: those remembered by rememberForAncestor and those of connected clients.
+         */
+        void forgetAllDecisions();
 
     signals:
         void clientConnected(const DBusClientPtr& client);
@@ -350,12 +357,12 @@ namespace FdoSecrets
 
         DBusClientPtr m_overrideClient;
 
-        // decisions remembered for processes started by an ancestor, see rememberForAncestor
+        // decisions remembered for processes started by a process, see rememberForAncestor
         struct AncestorDecisions
         {
             uint ancestorPid;
             quint64 ancestorStartTime;
-            // executables from the client (first) up to the ancestor (last)
+            // executables from the client (first) up to the process the decisions are tied to (last)
             QStringList exePaths;
             AuthDecision all;
             QHash<QUuid, AuthDecision> items;

@@ -30,29 +30,38 @@ to-fork)
     shift
     (($#)) || { echo "Pass your database file(s), e.g. $0 to-fork ~/Passwords.kdbx" >&2; exit 1; }
     [[ -x $FORK ]] || { echo "$FORK not found. Install the .deb first." >&2; exit 1; }
+    [[ -f $SERVICE ]] || { echo "$SERVICE not found, so nothing starts KeePassXC on demand." >&2; exit 1; }
+    for db in "$@"; do [[ -f $db ]] || { echo "$db not found." >&2; exit 1; }; done
     [[ ! -e $BACKUP ]] || { echo "$BACKUP exists, so you already switched. Run rollback first." >&2; exit 1; }
 
-    mkdir -p "$BACKUP/manifests" && chmod 700 "$BACKUP"
-    cp -a "$SERVICE" "$AUTOSTART" "$BACKUP/"
-    cp -a "$HOME/.config/keepassxc" "$BACKUP/config"
-    [[ -d $HOME/.cache/keepassxc ]] && cp -a "$HOME/.cache/keepassxc" "$BACKUP/cache"
-    for db in "$@"; do cp -a "$db" "$BACKUP/$(basename "$db").$STAMP"; done
+    # fill the backup next to its place and move it there only once complete
+    tmp=$(mktemp -d "$BACKUP.XXXXXX")
+    mkdir "$tmp/manifests"
+    cp -a "$SERVICE" "$tmp/"
+    [[ -f $AUTOSTART ]] && cp -a "$AUTOSTART" "$tmp/"
+    [[ -d $HOME/.config/keepassxc ]] && cp -a "$HOME/.config/keepassxc" "$tmp/config"
+    [[ -d $HOME/.cache/keepassxc ]] && cp -a "$HOME/.cache/keepassxc" "$tmp/cache"
+    i=0
+    for db in "$@"; do i=$((i + 1)); cp -a "$db" "$tmp/db$i-$(basename "$db").$STAMP"; done
     for m in "${MANIFESTS[@]}"; do
-        [[ -f $m ]] && mkdir -p "$BACKUP/manifests$(dirname "$m")" && cp -a "$m" "$BACKUP/manifests$m"
+        [[ -f $m ]] && mkdir -p "$tmp/manifests$(dirname "$m")" && cp -a "$m" "$tmp/manifests$m"
     done
+    mv "$tmp" "$BACKUP"
 
     sed -i "s|^Exec=.*|Exec=$FORK|" "$SERVICE"
-    sed -i -e "s|^Exec=.*|Exec=$FORK|" -e "s|^TryExec=.*|TryExec=$FORK|" "$AUTOSTART"
+    [[ -f $AUTOSTART ]] && sed -i -e "s|^Exec=.*|Exec=$FORK|" -e "s|^TryExec=.*|TryExec=$FORK|" "$AUTOSTART"
     echo "Backup in $BACKUP. Activation and autostart now run $FORK."
     echo "Start it now with:  $FORK &"
     ;;
 rollback)
     [[ -d $BACKUP ]] || { echo "No backup in $BACKUP, nothing to roll back." >&2; exit 1; }
     cp -a "$BACKUP/$(basename "$SERVICE")" "$SERVICE"
-    cp -a "$BACKUP/$(basename "$AUTOSTART")" "$AUTOSTART"
+    [[ -f $BACKUP/$(basename "$AUTOSTART") ]] && cp -a "$BACKUP/$(basename "$AUTOSTART")" "$AUTOSTART"
     # keep the fork's settings next to the backup, then restore the 2.7.10 ones
-    mv "$HOME/.config/keepassxc" "$BACKUP/config.fork-$STAMP"
-    cp -a "$BACKUP/config" "$HOME/.config/keepassxc"
+    if [[ -d $BACKUP/config ]]; then
+        [[ -d $HOME/.config/keepassxc ]] && mv "$HOME/.config/keepassxc" "$BACKUP/config.fork-$STAMP"
+        cp -a "$BACKUP/config" "$HOME/.config/keepassxc"
+    fi
     if [[ -d $BACKUP/cache ]]; then
         [[ -d $HOME/.cache/keepassxc ]] && mv "$HOME/.cache/keepassxc" "$BACKUP/cache.fork-$STAMP"
         cp -a "$BACKUP/cache" "$HOME/.cache/keepassxc"

@@ -83,7 +83,15 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>%1 (PID: %2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Your decision will be remembered for the duration while both the requesting client AND KeePassXC are running.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Your decision will be remembered while both KeePassXC AND the process chosen in &quot;Remember while this runs&quot; are running. If that is not %1 itself, it also covers later runs of %1 that this process starts the same way, through the same programs.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -100,6 +108,10 @@
     </message>
     <message>
         <source>Allow All &amp;&amp; &amp;Future</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Remember &amp;while this runs:</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -10337,6 +10349,14 @@ This option is deprecated, use --set-key-file instead.</source>
     </message>
     <message>
         <source>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;This improves compatibility with certain applications which search for password without unlocking the database first.&lt;/p&gt;&lt;p&gt;But enabling this may also crash the client if the database can not be unlocked within a certain timeout. (Usually 25s, but may be a different value set in applications.) &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Also forgets decisions remembered while a process runs, such as a shell or a coding agent, after the applications it started have disconnected.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Forget All Remembered Decisions</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

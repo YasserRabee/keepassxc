@@ -421,7 +421,7 @@ namespace FdoSecrets
             }
             ac->open();
         } else {
-            itemUnlockFinished({}, AuthDecision::Undecided, 0);
+            itemUnlockFinished({}, AuthDecision::Undecided, -1);
         }
     }
 
@@ -435,6 +435,7 @@ namespace FdoSecrets
             qDebug() << "DBus client gone before item unlocking finish";
             return;
         }
+        QHash<QUuid, AuthDecision> applied;
         for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
             const auto& uuid = it.key();
             // get back the corresponding item
@@ -447,6 +448,7 @@ namespace FdoSecrets
 
             // set auth
             client->setItemAuthorized(uuid, it.value());
+            applied.insert(uuid, it.value());
 
             if (client->itemAuthorized(uuid)) {
                 m_unlocked += item->objectPath();
@@ -458,7 +460,7 @@ namespace FdoSecrets
             client->setAllAuthorized(forFutureEntries);
         }
         if (auto dbus = client->dbus()) {
-            dbus->rememberForAncestor(*client, rememberDepth, decisions, forFutureEntries);
+            dbus->rememberForAncestor(*client, rememberDepth, applied, forFutureEntries);
         }
         // if anything is not unlocked, treat the whole prompt as dismissed
         // so the client has a chance to handle the error

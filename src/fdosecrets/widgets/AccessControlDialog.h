@@ -76,8 +76,8 @@ public:
 
 signals:
     /**
-     * @param rememberDepth the ancestor of the client (index into PeerInfo::hierarchy) that remembered
-     * decisions are tied to, or 0 for the client's connection only
+     * @param rememberDepth the process remembered decisions are tied to, as an index into the client's
+     * PeerInfo::hierarchy (0 is the client's process itself), or -1 for the client's connection only
      */
     void finished(const QHash<QUuid, AuthDecision>& results, AuthDecision forFutureEntries, int rememberDepth);
 

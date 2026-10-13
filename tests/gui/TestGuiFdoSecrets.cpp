@@ -244,6 +244,7 @@ void TestGuiFdoSecrets::cleanup()
 
     m_client->clearAuthorization();
     m_plugin->dbus()->overrideClient(m_client);
+    m_plugin->dbus()->forgetAllDecisions();
 }
 
 void TestGuiFdoSecrets::cleanupTestCase()
@@ -918,27 +919,43 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     const auto desktop =
         running(QStringLiteral("/usr/bin/gnome-shell"), QStringLiteral("/session.slice/shell.service"));
 
-    // decisions can be tied to ancestors up to the first one in neither the same terminal nor the
-    // same cgroup, so never to e.g. the desktop shell or systemd --user, which start anything
-    COMPARE(PeerInfo({{}, 0, true, {spawned(glab), script, agent, desktop}}).rememberAncestors(), 2);
+    // decisions can be tied to the client itself (0) and its ancestors up to the first one in neither
+    // the same terminal nor the same cgroup, so never to e.g. the desktop shell or systemd --user
+    auto maxDepth = [](const QList<ProcInfo>& hierarchy) {
+        return PeerInfo{{}, 0, true, hierarchy}.maxRememberDepth();
+    };
+    COMPARE(maxDepth({spawned(glab), script, agent, desktop}), 2);
     auto chrome = spawned(QStringLiteral("/opt/google/chrome/chrome"));
     chrome.cgroup = QStringLiteral("/app.slice/app-chrome.scope");
-    COMPARE(PeerInfo({{}, 0, true, {chrome, desktop}}).rememberAncestors(), 0);
-    // the same terminal is enough, e.g. without systemd
-    auto inTerminal = [](ProcInfo proc) {
+    COMPARE(maxDepth({chrome, desktop}), 0);
+    // the same pseudo terminal is enough, e.g. without systemd
+    auto inTerminal = [](ProcInfo proc, int tty) {
         proc.cgroup.clear();
-        proc.tty = 34817;
+        proc.tty = tty;
         return proc;
     };
-    COMPARE(PeerInfo({{}, 0, true, {inTerminal(spawned(glab)), inTerminal(script)}}).rememberAncestors(), 1);
+    const int pts1 = (136 << 8) | 1, tty1 = (4 << 8) | 1;
+    COMPARE(maxDepth({inTerminal(spawned(glab), pts1), inTerminal(script, pts1)}), 1);
+    // but not a console, which a compositor started from it shares with everything it starts
+    COMPARE(maxDepth({inTerminal(spawned(glab), tty1), inTerminal(desktop, tty1)}), 0);
+    // nor a login session's scope, which holds everything started in it, e.g. by a window manager
+    auto inSession = [](ProcInfo proc) {
+        proc.cgroup = QStringLiteral("/user.slice/user-1000.slice/session-2.scope");
+        return proc;
+    };
+    COMPARE(maxDepth({inSession(spawned(glab)), inSession(desktop)}), 0);
     // never PID 1
     auto init = spawned(QStringLiteral("/sbin/init"));
     init.pid = 1;
-    COMPARE(PeerInfo({{}, 0, true, {spawned(glab), init}}).rememberAncestors(), 0);
+    COMPARE(maxDepth({spawned(glab), init}), 0);
+    // nothing if the client can't be identified
+    auto unknown = spawned(glab);
+    unknown.startTime = 0;
+    COMPARE(maxDepth({unknown, script}), -1);
 
     // the first glab asks; the user allows the entry, keeping the default: its parent, the script
     dbus->overrideClient(client({spawned(glab), script, agent}));
-    VERIFY(unlockWithAccessDialog(service, item, 1));
+    VERIFY(unlockWithAccessDialog(service, item, true, false, -1));
     dbus->overrideClient(m_client);
 
     // later runs of glab by the script get the decision, so no prompt
@@ -947,6 +964,8 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     VERIFY(later->itemAuthorized(uuid));
     // but only for the entry the user decided on
     VERIFY(!later->itemKnown(QUuid::createUuid()));
+    // the default was the parent: it does not matter what started the script
+    VERIFY(client({spawned(glab), script, desktop})->itemAuthorized(uuid));
     // another program still asks
     VERIFY(!client({spawned(QStringLiteral("/usr/bin/python3")), script, agent})->itemKnown(uuid));
     // and so does glab started by another program under the script, e.g. an install script
@@ -958,12 +977,35 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
 
     // tied to the coding agent instead: later commands, each in a new shell, are not asked
     dbus->overrideClient(client({spawned(glab), spawned(zsh), agent}));
-    VERIFY(unlockWithAccessDialog(service, item, 2));
+    VERIFY(unlockWithAccessDialog(service, item, true, false, 2));
     dbus->overrideClient(m_client);
     VERIFY(client({spawned(glab), spawned(zsh), agent})->itemAuthorized(uuid));
     // but glab started another way still asks: by the agent's MCP server, or deeper down
     VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/node")), agent})->itemKnown(uuid));
     VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/npm")), spawned(zsh), agent})->itemKnown(uuid));
+
+    // without Remember, Allow All & Future stays with the connection, as before
+    const auto hub = QStringLiteral("/usr/bin/hub");
+    dbus->overrideClient(client({spawned(hub), script, agent}));
+    VERIFY(unlockWithAccessDialog(service, item, false, true, -1));
+    dbus->overrideClient(m_client);
+    VERIFY(!client({spawned(hub), script, agent})->itemKnown(uuid));
+
+    // tied to the program itself: its later connections are not asked, its later runs are
+    const auto gh = QStringLiteral("/usr/bin/gh");
+    dbus->rememberForAncestor(*client({running(gh, tab), script}), 0, {{uuid, AuthDecision::Allowed}}, {});
+    VERIFY(client({running(gh, tab), script})->itemAuthorized(uuid));
+    VERIFY(!client({spawned(gh), script})->itemKnown(uuid));
+
+    // if decisions tied to several processes apply, only the nearest one's count
+    const auto tea = QStringLiteral("/usr/bin/tea");
+    const auto shell = running(zsh, tab);
+    dbus->rememberForAncestor(*client({spawned(tea), spawned(zsh), agent}), 2, {}, AuthDecision::Denied);
+    dbus->rememberForAncestor(*client({spawned(tea), shell, agent}), 1, {{uuid, AuthDecision::Allowed}}, {});
+    VERIFY(client({spawned(tea), shell, agent})->itemAuthorized(uuid));
+    auto otherShell = client({spawned(tea), spawned(zsh), agent});
+    VERIFY(otherShell->itemKnown(uuid));
+    VERIFY(!otherShell->itemAuthorized(uuid));
 
     // Deny All & Future is passed on too
     const auto curl = QStringLiteral("/usr/bin/curl");
@@ -984,6 +1026,9 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     dbus->forgetAncestorDecisions(*later);
     VERIFY(!client({spawned(glab), script, agent})->itemKnown(uuid));
     VERIFY(client({spawned(glab), spawned(zsh), agent})->itemKnown(uuid));
+    // and Forget All Remembered Decisions forgets all
+    dbus->forgetAllDecisions();
+    VERIFY(!client({spawned(glab), spawned(zsh), agent})->itemKnown(uuid));
 }
 
 void TestGuiFdoSecrets::testServiceLock()
@@ -2081,6 +2126,8 @@ TestGuiFdoSecrets::encryptPassword(QByteArray value, QString contentType, const 
 
 bool TestGuiFdoSecrets::unlockWithAccessDialog(const QSharedPointer<ServiceProxy>& service,
                                                const QSharedPointer<ItemProxy>& item,
+                                               bool remember,
+                                               bool includeFutureEntries,
                                                int rememberDepth)
 {
     DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
@@ -2090,7 +2137,7 @@ bool TestGuiFdoSecrets::unlockWithAccessDialog(const QSharedPointer<ServiceProxy
     QSignalSpy spyPromptCompleted(prompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
     VERIFY(spyPromptCompleted.isValid());
     DBUS_VERIFY(prompt->Prompt(""));
-    VERIFY(driveAccessControlDialog(true, false, rememberDepth));
+    VERIFY(driveAccessControlDialog(remember, includeFutureEntries, rememberDepth));
     VERIFY(waitForSignal(spyPromptCompleted, 1));
     return true;
 }
@@ -2107,7 +2154,7 @@ bool TestGuiFdoSecrets::driveAccessControlDialog(bool remember, bool includeFutu
             auto rememberCheck = dlg->findChild<QCheckBox*>("rememberCheck");
             VERIFY(rememberCheck);
             rememberCheck->setChecked(remember);
-            if (rememberDepth > 0) {
+            if (rememberDepth >= 0) {
                 auto scope = dlg->findChild<QComboBox*>("rememberScope");
                 VERIFY(scope && scope->isVisible());
                 VERIFY(scope->findData(rememberDepth) >= 0);

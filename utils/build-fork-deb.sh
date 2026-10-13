@@ -3,7 +3,7 @@
 # Build this fork from git HEAD as a .deb that installs to /opt/keepassxc-fork,
 # inside an Ubuntu 26.04 Docker container, so no build dependencies land on the host.
 #
-# Usage: utils/build-fork-deb.sh [output-dir]      (default: build-deb/)
+# Usage: utils/build-fork-deb.sh [output-dir]      (default: <repo>/build-deb)
 #   RUN_TESTS=0  skip the test suite
 #
 # The package only adds /opt/keepassxc-fork and the polkit policy for Quick Unlock,
@@ -11,8 +11,9 @@
 
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
-OUT=$(realpath -m "${1:-build-deb}")
+REPO=$(git rev-parse --show-toplevel)
+OUT=$(realpath -m "${1:-$REPO/build-deb}")
+cd "$REPO"
 RUN_TESTS=${RUN_TESTS:-1}
 IMAGE=keepassxc-fork-build:26.04
 PREFIX=/opt/keepassxc-fork

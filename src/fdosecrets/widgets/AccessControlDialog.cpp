@@ -28,6 +28,7 @@
 #include "gui/Icons.h"
 
 #include <QFileInfo>
+#include <QTextDocument>
 #include <QWindow>
 
 #include <functional>
@@ -81,21 +82,23 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
         m_ui->buttonBox->addButton(detailsButtonText + QStringLiteral(" >>"), QDialogButtonBox::HelpRole);
     detailsButton->setCheckable(true);
 
-    // which ancestor of the client a remembered decision is tied to
-    auto ancestors = authOptions.testFlag(AuthOption::Remember) ? info.rememberAncestors() : 0;
-    for (int i = 1; i <= ancestors; ++i) {
+    // which process a remembered decision is tied to: the client itself or one of its ancestors
+    auto maxDepth = authOptions.testFlag(AuthOption::Remember) ? info.maxRememberDepth() : -1;
+    for (int i = 0; i <= maxDepth; ++i) {
         const auto& proc = info.hierarchy.at(i);
         m_ui->rememberScope->addItem(tr("%1 (PID: %2)").arg(proc.name, QString::number(proc.pid)), i);
-        m_ui->rememberScope->setItemData(i - 1, proc.exePath, Qt::ToolTipRole);
+        m_ui->rememberScope->setItemData(i, Qt::convertFromPlainText(proc.exePath), Qt::ToolTipRole);
     }
-    m_ui->rememberScopeRow->setVisible(ancestors > 0);
+    // by default its parent, e.g. the shell or script that runs it
+    m_ui->rememberScope->setCurrentIndex(qMin(1, maxDepth));
+    m_ui->rememberScopeRow->setVisible(maxDepth >= 0);
 
     QString remember = tr("Your decision will be remembered for the duration while both the requesting client "
                           "AND KeePassXC are running.");
-    if (ancestors > 0) {
+    if (maxDepth >= 0) {
         remember = tr("Your decision will be remembered while both KeePassXC AND the process chosen in "
-                      "\"Remember while this runs\" are running. It also covers later runs of %1 that this "
-                      "process starts the same way, through the same programs.")
+                      "\"Remember while this runs\" are running. If that is not %1 itself, it also covers later "
+                      "runs of %1 that this process starts the same way, through the same programs.")
                        .arg(QFileInfo(info.exePath()).fileName().toHtmlEscaped());
     }
     QString tooltip = QStringLiteral("<p align='justify'>%1</p>").arg(remember);
@@ -104,6 +107,7 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
     m_rememberCheck = new QCheckBox(tr("Remember"), this);
     m_rememberCheck->setObjectName("rememberCheck"); // for testing
     m_rememberCheck->setChecked(true);
+    connect(m_rememberCheck, &QCheckBox::toggled, m_ui->rememberScopeRow, &QWidget::setEnabled);
     m_ui->buttonBox->addButton(m_rememberCheck, QDialogButtonBox::ActionRole);
     m_rememberCheck->setToolTip(tooltip);
 
@@ -213,7 +217,11 @@ void AccessControlDialog::dialogFinished(int result)
         m_decisions.insert(uuid, undecided ? AuthDecision::Undecided : decision);
     }
 
-    emit finished(m_decisions, futureDecision, m_ui->rememberScope->currentData().toInt());
+    // Allow/Deny All & Future always remember for the connection, but only tie to a process with Remember
+    auto rememberDepth = m_rememberCheck->isChecked() && m_ui->rememberScope->count() > 0
+                             ? m_ui->rememberScope->currentData().toInt()
+                             : -1;
+    emit finished(m_decisions, futureDecision, rememberDepth);
 }
 
 QHash<QUuid, AuthDecision> AccessControlDialog::decisions() const

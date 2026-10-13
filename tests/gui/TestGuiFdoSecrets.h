@@ -111,9 +111,12 @@ private slots:
 private:
     bool driveUnlockDialog(DatabaseWidget* target = nullptr);
     bool driveNewDatabaseWizard();
-    bool driveAccessControlDialog(bool remember = true, bool includeFutureEntries = false, int rememberDepth = 0);
+    // rememberDepth: which process to tie remembered decisions to, -1 keeps the default
+    bool driveAccessControlDialog(bool remember = true, bool includeFutureEntries = false, int rememberDepth = -1);
     bool unlockWithAccessDialog(const QSharedPointer<ServiceProxy>& service,
                                 const QSharedPointer<ItemProxy>& item,
+                                bool remember,
+                                bool includeFutureEntries,
                                 int rememberDepth);
     bool waitForSignal(QSignalSpy& spy, int expectedCount);
 

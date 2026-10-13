@@ -91,14 +91,16 @@ namespace FdoSecrets
         }
 
         /**
-         * @brief How many ancestors "Remember" decisions can be tied to: hierarchy[1] up to hierarchy[n].
+         * @brief How far up the hierarchy "Remember" decisions can be tied: 0 is this process itself
+         * (its later connections), 1 its parent, and so on. -1 if this process can't be identified.
          *
-         * Walks up from the parent and stops at the first process that is PID 1, has an unknown
-         * executable or start time, or is in neither the same terminal nor the same cgroup (e.g.
-         * systemd scope) as this process. That leaves out processes that start programs for anyone,
-         * like systemd --user or the desktop shell. Returns 0 if this process' executable is unknown.
+         * Walks up from the parent and stops at the first process that is PID 1, can't be identified
+         * (unknown executable or start time), or is in neither the same pseudo terminal nor the same
+         * cgroup (a systemd scope per app or terminal tab, not a whole login session) as this process.
+         * That leaves out processes that start programs for anyone, like systemd --user or the
+         * desktop shell.
          */
-        int rememberAncestors() const;
+        int maxRememberDepth() const;
 
         bool operator==(const PeerInfo& other) const;
         bool operator!=(const PeerInfo& other) const;

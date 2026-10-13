@@ -669,7 +669,7 @@ namespace FdoSecrets
     {
         // the same ancestor started the client the same way, through the same executables
         auto depth = exePaths.size() - 1;
-        if (depth < 1 || depth > info.rememberAncestors()) {
+        if (depth < 0 || depth > info.maxRememberDepth()) {
             return false;
         }
         const auto& ancestor = info.hierarchy.at(depth);
@@ -700,7 +700,7 @@ namespace FdoSecrets
             }
         }
         const auto& info = client.processInfo();
-        if ((items.isEmpty() && !remembered(forFutureEntries)) || depth < 1 || depth > info.rememberAncestors()) {
+        if ((items.isEmpty() && !remembered(forFutureEntries)) || depth < 0 || depth > info.maxRememberDepth()) {
             return;
         }
         const auto& ancestor = info.hierarchy.at(depth);
@@ -728,30 +728,51 @@ namespace FdoSecrets
         m_ancestorDecisions.removeIf(
             [](const AncestorDecisions& ad) { return readProc(ad.ancestorPid).startTime != ad.ancestorStartTime; });
 
-        QList<const AncestorDecisions*> matching;
+        // if decisions tied to several processes apply, only the nearest process' count
+        const AncestorDecisions* nearest = nullptr;
         for (const auto& ad : asConst(m_ancestorDecisions)) {
-            if (ad.appliesTo(client.processInfo())) {
-                matching << &ad;
+            if (ad.appliesTo(client.processInfo()) && (!nearest || ad.exePaths.size() < nearest->exePaths.size())) {
+                nearest = &ad;
             }
         }
-        // farther ancestors first, so decisions tied to a nearer one win
-        std::sort(matching.begin(), matching.end(), [](const AncestorDecisions* a, const AncestorDecisions* b) {
-            return a->exePaths.size() > b->exePaths.size();
-        });
-        for (auto ad : matching) {
-            if (ad->all != AuthDecision::Undecided) {
-                client.setAllAuthorized(ad->all);
-            }
-            for (auto it = ad->items.constBegin(); it != ad->items.constEnd(); ++it) {
-                client.setItemAuthorized(it.key(), it.value());
-            }
+        if (!nearest) {
+            return;
+        }
+        if (nearest->all != AuthDecision::Undecided) {
+            client.setAllAuthorized(nearest->all);
+        }
+        for (auto it = nearest->items.constBegin(); it != nearest->items.constEnd(); ++it) {
+            client.setItemAuthorized(it.key(), it.value());
         }
     }
 
     void DBusMgr::forgetAncestorDecisions(const DBusClient& client)
     {
-        m_ancestorDecisions.removeIf(
-            [&client](const AncestorDecisions& ad) { return ad.appliesTo(client.processInfo()); });
+        QList<AncestorDecisions> forgotten;
+        m_ancestorDecisions.removeIf([&](const AncestorDecisions& ad) {
+            if (!ad.appliesTo(client.processInfo())) {
+                return false;
+            }
+            forgotten << ad;
+            return true;
+        });
+        // connected clients that got them, e.g. other connections of the same program, forget them too
+        for (const auto& other : asConst(m_clients)) {
+            for (const auto& ad : asConst(forgotten)) {
+                if (ad.appliesTo(other->processInfo())) {
+                    other->clearAuthorization();
+                    break;
+                }
+            }
+        }
+    }
+
+    void DBusMgr::forgetAllDecisions()
+    {
+        m_ancestorDecisions.clear();
+        for (const auto& client : asConst(m_clients)) {
+            client->clearAuthorization();
+        }
     }
 
     void DBusMgr::removeClient(DBusClient* client)
