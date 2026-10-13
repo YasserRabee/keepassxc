@@ -18,7 +18,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         dbus xvfb xauth xdotool libsecret-tools python3-secretstorage procps
 DOCKERFILE
 
-docker run --rm -v "$DEB:/tmp/keepassxc-fork.deb:ro" -v "$HERE:/test:ro" "$IMAGE" bash -euo pipefail -c '
+# host cgroup namespace: processes get real cgroup paths, which decide what "Remember while" offers
+docker run --rm --cgroupns=host -v "$DEB:/tmp/keepassxc-fork.deb:ro" -v "$HERE:/test:ro" "$IMAGE" bash -euo pipefail -c '
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/keepassxc-fork.deb >/tmp/apt.log 2>&1 || { tail -20 /tmp/apt.log; exit 1; }
 echo "installed: $(dpkg-query -W keepassxc-fork)"
 runuser -u ubuntu -- env LANG=C.UTF-8 dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" bash /test/inner.sh 2>&1 \

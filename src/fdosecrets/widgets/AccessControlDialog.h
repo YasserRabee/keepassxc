@@ -75,7 +75,11 @@ public:
     QHash<QUuid, AuthDecision> decisions() const;
 
 signals:
-    void finished(const QHash<QUuid, AuthDecision>& results, AuthDecision forFutureEntries);
+    /**
+     * @param rememberDepth the ancestor of the client (index into PeerInfo::hierarchy) that remembered
+     * decisions are tied to, or 0 for the client's connection only
+     */
+    void finished(const QHash<QUuid, AuthDecision>& results, AuthDecision forFutureEntries, int rememberDepth);
 
 private slots:
     void denyEntryClicked(const QUuid& uuid, const QModelIndex& index);

@@ -42,7 +42,6 @@ echo "default collection unlocked: $(dbus-send --session --print-reply --dest=or
 
 # --- dialog answering: counts every Access Request window and answers per $W/action
 : >"$W/prompts"
-DENY_XY=${DENY_XY:-471 242}  # "Deny All & Future" inside the 670x268 dialog
 answer() { echo "$1" >"$W/action"; }
 (
     while :; do
@@ -54,7 +53,10 @@ answer() { echo "$1" >"$W/action"; }
             case $act in
                 allow) xdotool key Return ;;                  # Allow Selected, Remember is ticked by default
                 allowall) xdotool key alt+f ;;                # Allow All & Future
-                deny) xdotool mousemove --window "$wid" $DENY_XY click 1 ;;  # Deny All & Future
+                allow-up) xdotool key --delay 150 alt+w Down Return ;;  # Allow Selected, remembered for the grandparent
+                deny) # Deny All & Future has no shortcut: click it, 26px above the bottom edge
+                    eval "$(xdotool getwindowgeometry --shell "$wid")"
+                    xdotool mousemove --window "$wid" 471 $((HEIGHT - 26)) click 1 ;;
             esac
             while xdotool search --onlyvisible --name 'Access Request' 2>/dev/null | grep -qx "$wid"; do sleep 0.1; done
         done
@@ -94,6 +96,13 @@ run_case "3b. script run #2 (new parent; run #1 has exited) prompts again" 1 all
 run_case "4. Deny All & Future is inherited" 1 deny "$look; $look; $look; :"
 run_case "5. glab probe item: Allow All & Future covers the next run's new probe" 1 allowall "$py probe; $py probe; $py probe; :"
 run_case "6. Allow Selected (one entry) does not cover the next run's new probe item" 2 allow "$py probe; $py probe; :"
+# A long-running process that starts a new shell for every command, like a coding agent.
+# "Remember while this runs" = that process: later commands are not asked, other ways are.
+cmd="bash -c '$look; :'"
+run_case "7. session process chosen once: its later commands (new shell each) are not asked" 1 allow-up \
+    "$cmd; $cmd; $cmd; :"
+run_case "8. but glab started another way under it is: by another program (like an MCP server), or deeper" 3 allow-up \
+    "$cmd; $py spawn; bash -c '$py spawn; :'; :"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

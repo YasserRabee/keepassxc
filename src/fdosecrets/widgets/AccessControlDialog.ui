@@ -123,6 +123,50 @@
     </widget>
    </item>
    <item>
+    <widget class="QWidget" name="rememberScopeRow" native="true">
+     <layout class="QHBoxLayout" name="rememberScopeLayout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="rememberScopeLabel">
+        <property name="text">
+         <string>Remember &amp;while this runs:</string>
+        </property>
+        <property name="buddy">
+         <cstring>rememberScope</cstring>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="rememberScope"/>
+      </item>
+      <item>
+       <spacer name="rememberScopeSpacer">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>0</width>
+          <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
      <item>
       <widget class="QDialogButtonBox" name="buttonBox">

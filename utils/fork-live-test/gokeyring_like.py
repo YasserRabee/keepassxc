@@ -1,5 +1,5 @@
 # Like go-keyring (used by glab): a NEW D-Bus connection for every keyring call.
-import os, sys
+import os, subprocess, sys
 import secretstorage
 
 def conn_call(fn):
@@ -23,6 +23,9 @@ if mode == "lookups":  # several lookups of one entry, one connection each
     for i in range(int(sys.argv[2])):
         got = conn_call(lambda c: read(c, {"service": "glab"}))
         print(f"  connection {i + 1}: {'got secret' if got == b'dummy-1' else 'NO SECRET'}")
+elif mode == "spawn":  # run secret-tool as a child of this process
+    got = subprocess.run(["secret-tool", "lookup", "service", "glab"], capture_output=True).stdout
+    print(f"  secret-tool under python: {'got secret' if got == b'dummy-1' else 'NO SECRET'}")
 elif mode == "probe":  # glab's keyring probe: create, read back, delete, each on its own connection
     attrs = {"service": "probe", "pid": str(os.getpid())}
     conn_call(lambda c: c.create_item(f"glab:__keyring_probe__:{os.getpid()}:1", attrs, b"probe"))

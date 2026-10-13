@@ -169,7 +169,7 @@ namespace
             disconnectAct->setToolTip(tr("Disconnect this application"));
             connect(disconnectAct, &QAction::triggered, this, [this]() {
                 if (m_client) {
-                    forgetParentDecisions();
+                    forgetAncestorDecisions();
                     m_client->disconnectDBus();
                 }
             });
@@ -179,7 +179,7 @@ namespace
             resetAct->setToolTip(tr("Reset any remembered decisions for this application"));
             connect(resetAct, &QAction::triggered, this, [this]() {
                 if (m_client) {
-                    forgetParentDecisions();
+                    forgetAncestorDecisions();
                     m_client->clearAuthorization();
                 }
             });
@@ -215,10 +215,10 @@ namespace
 
     private:
         // otherwise the app's next connection gets the decisions back
-        void forgetParentDecisions()
+        void forgetAncestorDecisions()
         {
             if (auto dbus = m_client->dbus()) {
-                dbus->forgetParentDecisions(*m_client);
+                dbus->forgetAncestorDecisions(*m_client);
             }
         }
 

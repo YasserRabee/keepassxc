@@ -43,6 +43,14 @@ namespace FdoSecrets
          * Together with pid this identifies a process, as a pid may be reused.
          */
         quint64 startTime{0};
+        /**
+         * @brief Controlling terminal (field 7 of /proc/pid/stat), 0 if none.
+         */
+        int tty{0};
+        /**
+         * @brief cgroup v2 path, e.g. a systemd scope per app or terminal tab, empty if unknown.
+         */
+        QString cgroup;
 
         bool operator==(const ProcInfo& other) const;
         bool operator!=(const ProcInfo& other) const;
@@ -83,14 +91,14 @@ namespace FdoSecrets
         }
 
         /**
-         * @brief The direct parent process that "Remember" decisions are tied to.
+         * @brief How many ancestors "Remember" decisions can be tied to: hierarchy[1] up to hierarchy[n].
          *
-         * Decisions remembered for this process also cover later processes with the same
-         * executable started under this parent, while it runs.
-         *
-         * @return nullptr if there is no usable parent (unknown, PID 1, or unknown executable).
+         * Walks up from the parent and stops at the first process that is PID 1, has an unknown
+         * executable or start time, or is in neither the same terminal nor the same cgroup (e.g.
+         * systemd scope) as this process. That leaves out processes that start programs for anyone,
+         * like systemd --user or the desktop shell. Returns 0 if this process' executable is unknown.
          */
-        const ProcInfo* rememberParent() const;
+        int rememberAncestors() const;
 
         bool operator==(const PeerInfo& other) const;
         bool operator!=(const PeerInfo& other) const;

@@ -41,6 +41,7 @@
 #include "util/TemporaryFile.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QLineEdit>
 #include <QSignalSpy>
 #include <QTest>
@@ -874,7 +875,7 @@ void TestGuiFdoSecrets::testServiceUnlockItemsConcurrentLock()
     }
 }
 
-void TestGuiFdoSecrets::testServiceUnlockItemsRememberParent()
+void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
 {
     FdoSecrets::settings()->setConfirmAccessItem(true);
 
@@ -887,76 +888,102 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberParent()
     auto dbus = m_plugin->dbus();
     auto uuid = dbus->pathToObject<Item>(QDBusObjectPath(item->path()))->backend()->uuid();
 
-    // this test process plays the parent, e.g. the shell running a script
-    const auto parent = readProc(QCoreApplication::applicationPid());
-    VERIFY(parent.startTime != 0);
-    const auto glab = QStringLiteral("/usr/bin/glab");
-    auto makeClient = [&](const QString& exe, QList<ProcInfo> ancestors) {
-        ancestors.prepend(ProcInfo{1234567, ancestors.first().pid, exe, QFileInfo(exe).fileName(), exe, 1});
-        DBusClientPtr client(new DBusClient(dbus.data(), {QStringLiteral("local"), 1234567, true, ancestors}));
-        dbus->applyParentDecisions(*client);
-        return client;
+    // A fake process tree in one terminal tab's cgroup. Decisions are tied to a running process,
+    // so this test process plays the ancestors: a script's shell, a coding agent, the desktop.
+    const auto tab = QStringLiteral("/app.slice/terminal-tab.scope");
+    const auto self = readProc(QCoreApplication::applicationPid());
+    VERIFY(self.startTime != 0);
+    auto running = [&](const QString& exe, const QString& group) {
+        auto proc = self;
+        proc.exePath = exe;
+        proc.name = QFileInfo(exe).fileName();
+        proc.cgroup = group;
+        return proc;
     };
+    // a new process every time, like the new shell a coding agent starts for every command
+    uint nextPid = 100000;
+    auto spawned = [&](const QString& exe) {
+        return ProcInfo{nextPid++, 0, exe, QFileInfo(exe).fileName(), exe, 1, 0, tab};
+    };
+    // the client first, then its parent, ...
+    auto client = [&](const QList<ProcInfo>& hierarchy) {
+        DBusClientPtr c(new DBusClient(dbus.data(), {QStringLiteral("local"), hierarchy.first().pid, true, hierarchy}));
+        dbus->applyAncestorDecisions(*c);
+        return c;
+    };
+    const auto glab = QStringLiteral("/usr/bin/glab");
+    const auto zsh = QStringLiteral("/usr/bin/zsh");
+    const auto script = running(QStringLiteral("/usr/bin/bash"), tab);
+    const auto agent = running(QStringLiteral("/usr/bin/claude"), tab);
+    const auto desktop =
+        running(QStringLiteral("/usr/bin/gnome-shell"), QStringLiteral("/session.slice/shell.service"));
 
-    // the first glab asks, the user allows the item and ticks Remember
-    auto first = makeClient(glab, {parent});
-    dbus->overrideClient(first);
-    {
-        DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
-        COMPARE(unlocked, {});
-        auto prompt = getProxy<PromptProxy>(promptPath);
-        VERIFY(prompt);
-        QSignalSpy spyPromptCompleted(prompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
-        VERIFY(spyPromptCompleted.isValid());
-        DBUS_VERIFY(prompt->Prompt(""));
-        VERIFY(driveAccessControlDialog(true));
-        VERIFY(waitForSignal(spyPromptCompleted, 1));
-        DBUS_COMPARE(item->locked(), false);
-    }
+    // decisions can be tied to ancestors up to the first one in neither the same terminal nor the
+    // same cgroup, so never to e.g. the desktop shell or systemd --user, which start anything
+    COMPARE(PeerInfo({{}, 0, true, {spawned(glab), script, agent, desktop}}).rememberAncestors(), 2);
+    auto chrome = spawned(QStringLiteral("/opt/google/chrome/chrome"));
+    chrome.cgroup = QStringLiteral("/app.slice/app-chrome.scope");
+    COMPARE(PeerInfo({{}, 0, true, {chrome, desktop}}).rememberAncestors(), 0);
+    // the same terminal is enough, e.g. without systemd
+    auto inTerminal = [](ProcInfo proc) {
+        proc.cgroup.clear();
+        proc.tty = 34817;
+        return proc;
+    };
+    COMPARE(PeerInfo({{}, 0, true, {inTerminal(spawned(glab)), inTerminal(script)}}).rememberAncestors(), 1);
+    // never PID 1
+    auto init = spawned(QStringLiteral("/sbin/init"));
+    init.pid = 1;
+    COMPARE(PeerInfo({{}, 0, true, {spawned(glab), init}}).rememberAncestors(), 0);
+
+    // the first glab asks; the user allows the entry, keeping the default: its parent, the script
+    dbus->overrideClient(client({spawned(glab), script, agent}));
+    VERIFY(unlockWithAccessDialog(service, item, 1));
     dbus->overrideClient(m_client);
 
-    // a later glab under the same parent gets the decision, so no prompt
-    auto later = makeClient(glab, {parent});
+    // later runs of glab by the script get the decision, so no prompt
+    auto later = client({spawned(glab), script, agent});
     VERIFY(later->itemKnown(uuid));
     VERIFY(later->itemAuthorized(uuid));
     // but only for the entry the user decided on
     VERIFY(!later->itemKnown(QUuid::createUuid()));
-
-    // only the direct parent counts: glab started by another program under the parent
-    // (e.g. an npm install script run from the same shell) still asks
-    const ProcInfo npm{7654321, parent.pid, QStringLiteral("/usr/bin/sh"), QStringLiteral("sh"), {}, 1};
-    VERIFY(!makeClient(glab, {npm, parent})->itemKnown(uuid));
-
-    // another executable under the same parent still asks
-    VERIFY(!makeClient(QStringLiteral("/usr/bin/python3"), {parent})->itemKnown(uuid));
-
-    // a new process that reuses the parent's pid does not count
-    auto reused = parent;
+    // another program still asks
+    VERIFY(!client({spawned(QStringLiteral("/usr/bin/python3")), script, agent})->itemKnown(uuid));
+    // and so does glab started by another program under the script, e.g. an install script
+    VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/sh")), script, agent})->itemKnown(uuid));
+    // a new process that reuses the script's pid does not count
+    auto reused = script;
     reused.startTime += 1;
-    VERIFY(!makeClient(glab, {reused})->itemKnown(uuid));
+    VERIFY(!client({spawned(glab), reused, agent})->itemKnown(uuid));
 
-    // nothing is tied to PID 1, which never exits
-    const ProcInfo init{1, 0, QStringLiteral("/sbin/init"), QStringLiteral("systemd"), {}, 1};
-    const auto wget = QStringLiteral("/usr/bin/wget");
-    dbus->rememberForParent(*makeClient(wget, {init}), {}, AuthDecision::Allowed);
-    VERIFY(!makeClient(wget, {init})->itemKnown(uuid));
+    // tied to the coding agent instead: later commands, each in a new shell, are not asked
+    dbus->overrideClient(client({spawned(glab), spawned(zsh), agent}));
+    VERIFY(unlockWithAccessDialog(service, item, 2));
+    dbus->overrideClient(m_client);
+    VERIFY(client({spawned(glab), spawned(zsh), agent})->itemAuthorized(uuid));
+    // but glab started another way still asks: by the agent's MCP server, or deeper down
+    VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/node")), agent})->itemKnown(uuid));
+    VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/npm")), spawned(zsh), agent})->itemKnown(uuid));
 
     // Deny All & Future is passed on too
     const auto curl = QStringLiteral("/usr/bin/curl");
-    dbus->rememberForParent(*makeClient(curl, {parent}), {}, AuthDecision::Denied);
-    auto denied = makeClient(curl, {parent});
+    dbus->rememberForAncestor(*client({spawned(curl), script}), 1, {}, AuthDecision::Denied);
+    auto denied = client({spawned(curl), script});
     VERIFY(denied->itemKnown(uuid));
     VERIFY(!denied->itemAuthorized(uuid));
 
-    // once decisions are not passed on
+    // once decisions are not
     const auto tool = QStringLiteral("/usr/bin/secret-tool");
-    dbus->rememberForParent(*makeClient(tool, {parent}), {{uuid, AuthDecision::AllowedOnce}}, AuthDecision::Undecided);
-    VERIFY(!makeClient(tool, {parent})->itemKnown(uuid));
+    dbus->rememberForAncestor(*client({spawned(tool), script}), 1, {{uuid, AuthDecision::AllowedOnce}}, {});
+    VERIFY(!client({spawned(tool), script})->itemKnown(uuid));
+    // and nothing is tied to an ancestor that does not qualify
+    dbus->rememberForAncestor(*client({spawned(tool), script, desktop}), 2, {}, AuthDecision::Allowed);
+    VERIFY(!client({spawned(tool), script, desktop})->itemKnown(uuid));
 
-    // Reset/Disconnect in the settings forgets them
-    dbus->forgetParentDecisions(*later);
-    VERIFY(!makeClient(glab, {parent})->itemKnown(uuid));
-    dbus->forgetParentDecisions(*denied);
+    // Reset/Disconnect in the settings forgets the decisions that apply to that client
+    dbus->forgetAncestorDecisions(*later);
+    VERIFY(!client({spawned(glab), script, agent})->itemKnown(uuid));
+    VERIFY(client({spawned(glab), spawned(zsh), agent})->itemKnown(uuid));
 }
 
 void TestGuiFdoSecrets::testServiceLock()
@@ -2052,7 +2079,23 @@ TestGuiFdoSecrets::encryptPassword(QByteArray value, QString contentType, const 
     return m_clientCipher->encrypt(ss.unmarshal(m_plugin->dbus())).marshal();
 }
 
-bool TestGuiFdoSecrets::driveAccessControlDialog(bool remember, bool includeFutureEntries)
+bool TestGuiFdoSecrets::unlockWithAccessDialog(const QSharedPointer<ServiceProxy>& service,
+                                               const QSharedPointer<ItemProxy>& item,
+                                               int rememberDepth)
+{
+    DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
+    VERIFY(unlocked.isEmpty());
+    auto prompt = getProxy<PromptProxy>(promptPath);
+    VERIFY(prompt);
+    QSignalSpy spyPromptCompleted(prompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
+    VERIFY(spyPromptCompleted.isValid());
+    DBUS_VERIFY(prompt->Prompt(""));
+    VERIFY(driveAccessControlDialog(true, false, rememberDepth));
+    VERIFY(waitForSignal(spyPromptCompleted, 1));
+    return true;
+}
+
+bool TestGuiFdoSecrets::driveAccessControlDialog(bool remember, bool includeFutureEntries, int rememberDepth)
 {
     processEvents();
     for (auto w : QApplication::topLevelWidgets()) {
@@ -2064,6 +2107,12 @@ bool TestGuiFdoSecrets::driveAccessControlDialog(bool remember, bool includeFutu
             auto rememberCheck = dlg->findChild<QCheckBox*>("rememberCheck");
             VERIFY(rememberCheck);
             rememberCheck->setChecked(remember);
+            if (rememberDepth > 0) {
+                auto scope = dlg->findChild<QComboBox*>("rememberScope");
+                VERIFY(scope && scope->isVisible());
+                VERIFY(scope->findData(rememberDepth) >= 0);
+                scope->setCurrentIndex(scope->findData(rememberDepth));
+            }
 
             if (includeFutureEntries) {
                 dlg->done(AccessControlDialog::AllowAll);

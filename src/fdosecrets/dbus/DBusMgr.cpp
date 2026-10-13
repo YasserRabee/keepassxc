@@ -199,7 +199,17 @@ namespace FdoSecrets
             info.command = QString::fromLocal8Bit(cmdline.readAll().replace('\0', ' ')).trimmed();
         }
 
-        // /proc/pid/stat gives ppid, name, start time
+        // /proc/pid/cgroup gives the cgroup v2 path in the "0::<path>" line
+        QFile cgroup(QStringLiteral("/proc/%1/cgroup").arg(pid));
+        if (cgroup.open(QIODevice::ReadOnly)) {
+            for (const auto& line : cgroup.readAll().split('\n')) {
+                if (line.startsWith("0::")) {
+                    info.cgroup = QString::fromLocal8Bit(line.mid(3));
+                }
+            }
+        }
+
+        // /proc/pid/stat gives ppid, name, terminal, start time
         QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
         if (stat.open(QIODevice::ReadOnly)) {
             auto line = stat.readAll();
@@ -213,6 +223,10 @@ namespace FdoSecrets
                 auto parts = line.mid(commEnd + 1).trimmed().split(' ');
                 if (parts.size() >= 2) {
                     info.ppid = parts[1].toUInt();
+                }
+                // parts start at field 3, so field 7 (tty_nr) is parts[4]
+                if (parts.size() >= 5) {
+                    info.tty = parts[4].toInt();
                 }
                 // parts start at field 3, so field 22 (starttime) is parts[19]
                 if (parts.size() >= 20) {
@@ -643,7 +657,7 @@ namespace FdoSecrets
         }
 
         auto client = DBusClientPtr(new DBusClient(this, info));
-        applyParentDecisions(*client);
+        applyAncestorDecisions(*client);
 
         emit clientConnected(client);
         m_watcher.addWatchedService(addr);
@@ -651,67 +665,93 @@ namespace FdoSecrets
         return client;
     }
 
-    bool DBusMgr::ParentDecisions::appliesTo(const PeerInfo& info) const
+    bool DBusMgr::AncestorDecisions::appliesTo(const PeerInfo& info) const
     {
-        // only the direct parent counts, so programs started by other programs under it still ask
-        auto parent = info.rememberParent();
-        return parent && parent->pid == parentPid && parent->startTime == parentStartTime
-               && info.exePath() == exePath;
+        // the same ancestor started the client the same way, through the same executables
+        auto depth = exePaths.size() - 1;
+        if (depth < 1 || depth > info.rememberAncestors()) {
+            return false;
+        }
+        const auto& ancestor = info.hierarchy.at(depth);
+        return ancestor.pid == ancestorPid && ancestor.startTime == ancestorStartTime
+               && exePathsTo(info, depth) == exePaths;
     }
 
-    void DBusMgr::rememberForParent(const DBusClient& client,
-                                    const QHash<QUuid, AuthDecision>& decisions,
-                                    AuthDecision forFutureEntries)
+    QStringList DBusMgr::AncestorDecisions::exePathsTo(const PeerInfo& info, int depth)
     {
-        const auto& info = client.processInfo();
-        auto parent = info.rememberParent();
-        if (!parent) {
-            return;
+        QStringList paths;
+        for (int i = 0; i <= depth; ++i) {
+            paths << info.hierarchy.at(i).exePath;
         }
+        return paths;
+    }
 
-        auto it = std::find_if(m_parentDecisions.begin(), m_parentDecisions.end(), [&info](const ParentDecisions& pd) {
-            return pd.appliesTo(info);
-        });
-        if (it == m_parentDecisions.end()) {
-            it = m_parentDecisions.insert(
-                it, {parent->pid, parent->startTime, info.exePath(), AuthDecision::Undecided, {}});
-        }
-
+    void DBusMgr::rememberForAncestor(const DBusClient& client,
+                                      int depth,
+                                      const QHash<QUuid, AuthDecision>& decisions,
+                                      AuthDecision forFutureEntries)
+    {
         // once decisions stay with the client
         auto remembered = [](AuthDecision d) { return d == AuthDecision::Allowed || d == AuthDecision::Denied; };
+        QHash<QUuid, AuthDecision> items;
+        for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
+            if (remembered(it.value())) {
+                items.insert(it.key(), it.value());
+            }
+        }
+        const auto& info = client.processInfo();
+        if ((items.isEmpty() && !remembered(forFutureEntries)) || depth < 1 || depth > info.rememberAncestors()) {
+            return;
+        }
+        const auto& ancestor = info.hierarchy.at(depth);
+        auto exePaths = AncestorDecisions::exePathsTo(info, depth);
+
+        auto it =
+            std::find_if(m_ancestorDecisions.begin(), m_ancestorDecisions.end(), [&](const AncestorDecisions& ad) {
+                return ad.ancestorPid == ancestor.pid && ad.ancestorStartTime == ancestor.startTime
+                       && ad.exePaths == exePaths;
+            });
+        if (it == m_ancestorDecisions.end()) {
+            it = m_ancestorDecisions.insert(it,
+                                            {ancestor.pid, ancestor.startTime, exePaths, AuthDecision::Undecided, {}});
+        }
+
         if (remembered(forFutureEntries)) {
             it->all = forFutureEntries;
         }
-        for (auto d = decisions.constBegin(); d != decisions.constEnd(); ++d) {
-            if (remembered(d.value())) {
-                it->items.insert(d.key(), d.value());
-            }
-        }
+        it->items.insert(items);
     }
 
-    void DBusMgr::applyParentDecisions(DBusClient& client)
+    void DBusMgr::applyAncestorDecisions(DBusClient& client)
     {
-        // drop decisions whose parent exited; a reused pid has a different start time
-        m_parentDecisions.removeIf(
-            [](const ParentDecisions& pd) { return readProc(pd.parentPid).startTime != pd.parentStartTime; });
+        // drop decisions whose ancestor exited; a reused pid has a different start time
+        m_ancestorDecisions.removeIf(
+            [](const AncestorDecisions& ad) { return readProc(ad.ancestorPid).startTime != ad.ancestorStartTime; });
 
-        for (const auto& pd : asConst(m_parentDecisions)) {
-            if (!pd.appliesTo(client.processInfo())) {
-                continue;
+        QList<const AncestorDecisions*> matching;
+        for (const auto& ad : asConst(m_ancestorDecisions)) {
+            if (ad.appliesTo(client.processInfo())) {
+                matching << &ad;
             }
-            if (pd.all != AuthDecision::Undecided) {
-                client.setAllAuthorized(pd.all);
+        }
+        // farther ancestors first, so decisions tied to a nearer one win
+        std::sort(matching.begin(), matching.end(), [](const AncestorDecisions* a, const AncestorDecisions* b) {
+            return a->exePaths.size() > b->exePaths.size();
+        });
+        for (auto ad : matching) {
+            if (ad->all != AuthDecision::Undecided) {
+                client.setAllAuthorized(ad->all);
             }
-            for (auto it = pd.items.constBegin(); it != pd.items.constEnd(); ++it) {
+            for (auto it = ad->items.constBegin(); it != ad->items.constEnd(); ++it) {
                 client.setItemAuthorized(it.key(), it.value());
             }
         }
     }
 
-    void DBusMgr::forgetParentDecisions(const DBusClient& client)
+    void DBusMgr::forgetAncestorDecisions(const DBusClient& client)
     {
-        m_parentDecisions.removeIf(
-            [&client](const ParentDecisions& pd) { return pd.appliesTo(client.processInfo()); });
+        m_ancestorDecisions.removeIf(
+            [&client](const AncestorDecisions& ad) { return ad.appliesTo(client.processInfo()); });
     }
 
     void DBusMgr::removeClient(DBusClient* client)

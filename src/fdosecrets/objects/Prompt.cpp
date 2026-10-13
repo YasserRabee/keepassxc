@@ -421,11 +421,13 @@ namespace FdoSecrets
             }
             ac->open();
         } else {
-            itemUnlockFinished({}, AuthDecision::Undecided);
+            itemUnlockFinished({}, AuthDecision::Undecided, 0);
         }
     }
 
-    void UnlockPrompt::itemUnlockFinished(const QHash<QUuid, AuthDecision>& decisions, AuthDecision forFutureEntries)
+    void UnlockPrompt::itemUnlockFinished(const QHash<QUuid, AuthDecision>& decisions,
+                                          AuthDecision forFutureEntries,
+                                          int rememberDepth)
     {
         auto client = m_client.lock();
         if (!client) {
@@ -456,7 +458,7 @@ namespace FdoSecrets
             client->setAllAuthorized(forFutureEntries);
         }
         if (auto dbus = client->dbus()) {
-            dbus->rememberForParent(*client, decisions, forFutureEntries);
+            dbus->rememberForAncestor(*client, rememberDepth, decisions, forFutureEntries);
         }
         // if anything is not unlocked, treat the whole prompt as dismissed
         // so the client has a chance to handle the error

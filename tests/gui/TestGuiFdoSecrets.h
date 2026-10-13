@@ -76,7 +76,7 @@ private slots:
     void testServiceUnlockItems();
     void testServiceUnlockItemsIncludeFutureEntries();
     void testServiceUnlockItemsConcurrentLock();
-    void testServiceUnlockItemsRememberParent();
+    void testServiceUnlockItemsRememberAncestor();
     void testServiceLock();
     void testServiceLockConcurrent();
 
@@ -111,7 +111,10 @@ private slots:
 private:
     bool driveUnlockDialog(DatabaseWidget* target = nullptr);
     bool driveNewDatabaseWizard();
-    bool driveAccessControlDialog(bool remember = true, bool includeFutureEntries = false);
+    bool driveAccessControlDialog(bool remember = true, bool includeFutureEntries = false, int rememberDepth = 0);
+    bool unlockWithAccessDialog(const QSharedPointer<ServiceProxy>& service,
+                                const QSharedPointer<ItemProxy>& item,
+                                int rememberDepth);
     bool waitForSignal(QSignalSpy& spy, int expectedCount);
 
     void processEvents();

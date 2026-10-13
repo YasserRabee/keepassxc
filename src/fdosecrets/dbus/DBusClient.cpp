@@ -29,7 +29,8 @@ namespace FdoSecrets
     bool ProcInfo::operator==(const ProcInfo& other) const
     {
         return this->pid == other.pid && this->ppid == other.ppid && this->exePath == other.exePath
-               && this->name == other.name && this->command == other.command && this->startTime == other.startTime;
+               && this->name == other.name && this->command == other.command && this->startTime == other.startTime
+               && this->tty == other.tty && this->cgroup == other.cgroup;
     }
 
     bool ProcInfo::operator!=(const ProcInfo& other) const
@@ -37,17 +38,24 @@ namespace FdoSecrets
         return !(*this == other);
     }
 
-    const ProcInfo* PeerInfo::rememberParent() const
+    int PeerInfo::rememberAncestors() const
     {
-        if (hierarchy.size() < 2 || exePath().isEmpty()) {
-            return nullptr;
+        if (hierarchy.isEmpty() || exePath().isEmpty()) {
+            return 0;
         }
-        const auto& parent = hierarchy.at(1);
-        // PID 1 never exits, so tying a decision to it would cover the executable forever
-        if (parent.pid <= 1 || parent.startTime == 0) {
-            return nullptr;
+        const auto& self = hierarchy.front();
+        int count = 0;
+        for (int i = 1; i < hierarchy.size(); ++i) {
+            const auto& proc = hierarchy.at(i);
+            auto sameTerminal = proc.tty != 0 && proc.tty == self.tty;
+            auto sameGroup = !proc.cgroup.isEmpty() && proc.cgroup != QLatin1String("/") && proc.cgroup == self.cgroup;
+            // PID 1 never exits, so tying a decision to it would cover the executable forever
+            if (proc.pid <= 1 || proc.startTime == 0 || proc.exePath.isEmpty() || !(sameTerminal || sameGroup)) {
+                break;
+            }
+            count = i;
         }
-        return &parent;
+        return count;
     }
 
     bool PeerInfo::operator==(const PeerInfo& other) const

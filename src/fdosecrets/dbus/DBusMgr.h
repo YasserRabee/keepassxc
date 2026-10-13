@@ -213,24 +213,25 @@ namespace FdoSecrets
         void overrideClient(const DBusClientPtr& fake);
 
         /**
-         * Remember the user's decisions for later clients that run the same executable
-         * as @a client under its direct parent process, while that parent runs.
+         * Remember the user's decisions for later clients that run the same executable and that
+         * the same, still running, ancestor of @a client (hierarchy[@a depth], at most
+         * PeerInfo::rememberAncestors()) starts the same way, through the same executables.
          * Only remembered (not once) decisions are kept. Nothing is saved to disk.
          */
-        void rememberForParent(const DBusClient& client,
-                               const QHash<QUuid, AuthDecision>& decisions,
-                               AuthDecision forFutureEntries);
+        void rememberForAncestor(const DBusClient& client,
+                                 int depth,
+                                 const QHash<QUuid, AuthDecision>& decisions,
+                                 AuthDecision forFutureEntries);
 
         /**
-         * Give a new client the decisions remembered by rememberForParent, if it runs the
-         * same executable and its direct parent is the same, still running, process.
+         * Give a new client the decisions remembered by rememberForAncestor that apply to it.
          */
-        void applyParentDecisions(DBusClient& client);
+        void applyAncestorDecisions(DBusClient& client);
 
         /**
-         * Forget decisions remembered by rememberForParent that would apply to @a client.
+         * Forget decisions remembered by rememberForAncestor that would apply to @a client.
          */
-        void forgetParentDecisions(const DBusClient& client);
+        void forgetAncestorDecisions(const DBusClient& client);
 
     signals:
         void clientConnected(const DBusClientPtr& client);
@@ -349,18 +350,20 @@ namespace FdoSecrets
 
         DBusClientPtr m_overrideClient;
 
-        // decisions remembered for processes started by a parent, see rememberForParent
-        struct ParentDecisions
+        // decisions remembered for processes started by an ancestor, see rememberForAncestor
+        struct AncestorDecisions
         {
-            uint parentPid;
-            quint64 parentStartTime;
-            QString exePath;
+            uint ancestorPid;
+            quint64 ancestorStartTime;
+            // executables from the client (first) up to the ancestor (last)
+            QStringList exePaths;
             AuthDecision all;
             QHash<QUuid, AuthDecision> items;
 
             bool appliesTo(const PeerInfo& info) const;
+            static QStringList exePathsTo(const PeerInfo& info, int depth);
         };
-        QList<ParentDecisions> m_parentDecisions{};
+        QList<AncestorDecisions> m_ancestorDecisions{};
 
         friend class ::TestFdoSecrets;
     };

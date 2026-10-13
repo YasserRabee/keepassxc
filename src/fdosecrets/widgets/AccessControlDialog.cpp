@@ -81,16 +81,25 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
         m_ui->buttonBox->addButton(detailsButtonText + QStringLiteral(" >>"), QDialogButtonBox::HelpRole);
     detailsButton->setCheckable(true);
 
+    // which ancestor of the client a remembered decision is tied to
+    auto ancestors = authOptions.testFlag(AuthOption::Remember) ? info.rememberAncestors() : 0;
+    for (int i = 1; i <= ancestors; ++i) {
+        const auto& proc = info.hierarchy.at(i);
+        m_ui->rememberScope->addItem(tr("%1 (PID: %2)").arg(proc.name, QString::number(proc.pid)), i);
+        m_ui->rememberScope->setItemData(i - 1, proc.exePath, Qt::ToolTipRole);
+    }
+    m_ui->rememberScopeRow->setVisible(ancestors > 0);
+
     QString remember = tr("Your decision will be remembered for the duration while both the requesting client "
                           "AND KeePassXC are running.");
-    if (auto parent = info.rememberParent()) {
-        remember = tr("Your decision will be remembered while both KeePassXC AND the parent process %1 (PID: %2) "
-                      "are running. It also covers other runs of %3 started by that process.")
-                       .arg(parent->name.toHtmlEscaped(),
-                            QString::number(parent->pid),
-                            QFileInfo(info.exePath()).fileName().toHtmlEscaped());
+    if (ancestors > 0) {
+        remember = tr("Your decision will be remembered while both KeePassXC AND the process chosen in "
+                      "\"Remember while this runs\" are running. It also covers later runs of %1 that this "
+                      "process starts the same way, through the same programs.")
+                       .arg(QFileInfo(info.exePath()).fileName().toHtmlEscaped());
     }
     QString tooltip = QStringLiteral("<p align='justify'>%1</p>").arg(remember);
+    m_ui->rememberScope->setToolTip(tooltip);
 
     m_rememberCheck = new QCheckBox(tr("Remember"), this);
     m_rememberCheck->setObjectName("rememberCheck"); // for testing
@@ -204,7 +213,7 @@ void AccessControlDialog::dialogFinished(int result)
         m_decisions.insert(uuid, undecided ? AuthDecision::Undecided : decision);
     }
 
-    emit finished(m_decisions, futureDecision);
+    emit finished(m_decisions, futureDecision, m_ui->rememberScope->currentData().toInt());
 }
 
 QHash<QUuid, AuthDecision> AccessControlDialog::decisions() const
