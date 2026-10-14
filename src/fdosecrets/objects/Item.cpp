@@ -18,6 +18,7 @@
 
 #include "Item.h"
 
+#include "fdosecrets/DecisionLog.h"
 #include "fdosecrets/FdoSecretsPlugin.h"
 #include "fdosecrets/objects/Collection.h"
 #include "fdosecrets/objects/Prompt.h"
@@ -271,7 +272,12 @@ namespace FdoSecrets
         if (ret.err()) {
             return ret;
         }
-        if (!client->itemAuthorizedResetOnce(backend()->uuid())) {
+        auto authorized = client->itemAuthorizedResetOnce(backend()->uuid());
+        DecisionLog::write("secret",
+                           {{"client", DecisionLog::client(client->processInfo())},
+                            {"entry", DecisionLog::entry(backend())},
+                            {"granted", authorized}});
+        if (!authorized) {
             return DBusResult(DBUS_ERROR_SECRET_IS_LOCKED);
         }
 

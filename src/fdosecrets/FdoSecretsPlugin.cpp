@@ -17,6 +17,8 @@
 
 #include "FdoSecretsPlugin.h"
 
+#include "config-keepassx.h"
+#include "fdosecrets/DecisionLog.h"
 #include "fdosecrets/FdoSecretsSettings.h"
 #include "fdosecrets/objects/Service.h"
 #include "fdosecrets/widgets/SettingsWidgetFdoSecrets.h"
@@ -70,11 +72,18 @@ void FdoSecretsPlugin::updateServiceState()
                 FdoSecrets::settings()->setEnabled(false);
                 return;
             }
+            FdoSecrets::DecisionLog::write("start",
+                                           {{"version", KEEPASSXC_VERSION},
+                                            {"confirmAccessItem", FdoSecrets::settings()->confirmAccessItem()},
+                                            {"confirmDeleteItem", FdoSecrets::settings()->confirmDeleteItem()},
+                                            {"showNotification", FdoSecrets::settings()->showNotification()},
+                                            {"unlockBeforeSearch", FdoSecrets::settings()->unlockBeforeSearch()}});
             emit secretServiceStarted();
         }
     } else {
         if (m_secretService) {
             m_secretService.reset();
+            FdoSecrets::DecisionLog::write("stop", {});
             emit secretServiceStopped();
         }
     }

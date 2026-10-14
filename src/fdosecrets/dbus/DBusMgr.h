@@ -25,6 +25,8 @@
 #include <QDBusServiceWatcher>
 #include <QDBusVirtualObject>
 #include <QDebug>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QtDBus>
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
@@ -369,7 +371,9 @@ namespace FdoSecrets
 
             bool appliesTo(const PeerInfo& info) const;
             static QStringList exePathsTo(const PeerInfo& info, int depth);
+            QJsonObject toJson() const;
         };
+        QJsonArray ancestorDecisionsJson() const;
         QList<AncestorDecisions> m_ancestorDecisions{};
 
         friend class ::TestFdoSecrets;

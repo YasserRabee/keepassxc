@@ -17,6 +17,7 @@
 
 #include "Prompt.h"
 
+#include "fdosecrets/DecisionLog.h"
 #include "fdosecrets/objects/Collection.h"
 #include "fdosecrets/objects/Item.h"
 #include "fdosecrets/objects/Service.h"
@@ -27,6 +28,9 @@
 #include "core/Entry.h"
 #include "gui/MessageBox.h"
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QElapsedTimer>
 #include <QThread>
 #include <QTimer>
 #include <QWindow>
@@ -406,6 +410,7 @@ namespace FdoSecrets
             QString app = tr("%1 (PID: %2)").arg(client->name()).arg(client->pid());
             auto ac = new AccessControlDialog(
                 findWindow(m_windowId), entries, app, client->processInfo(), AuthOption::Remember);
+            logPromptAndAnswer(ac, *client, entries);
             connect(ac, &AccessControlDialog::finished, this, &UnlockPrompt::itemUnlockFinished);
             connect(ac, &AccessControlDialog::finished, ac, &AccessControlDialog::deleteLater);
             // the dialog is asking about entries that do not survive the database
@@ -423,6 +428,55 @@ namespace FdoSecrets
         } else {
             itemUnlockFinished({}, AuthDecision::Undecided, -1);
         }
+    }
+
+    void
+    UnlockPrompt::logPromptAndAnswer(AccessControlDialog* ac, const DBusClient& client, const QList<Entry*>& entries)
+    {
+        QJsonArray entriesJson;
+        for (const auto& entry : entries) {
+            entriesJson << DecisionLog::entry(entry);
+        }
+        auto path = objectPath().path();
+        DecisionLog::write(
+            "prompt",
+            {{"prompt", path}, {"client", DecisionLog::client(client.processInfo(), true)}, {"entries", entriesJson}});
+
+        QElapsedTimer shown;
+        shown.start();
+        auto info = client.processInfo();
+        // connected before the handler that applies the answer, so the answer is logged before what it remembers
+        connect(
+            ac,
+            &AccessControlDialog::finished,
+            this,
+            [ac, path, info, shown](const QHash<QUuid, AuthDecision>& decisions, AuthDecision future, int depth) {
+                static const QHash<int, QString> buttons{{AccessControlDialog::Rejected, "closed"},
+                                                         {AccessControlDialog::AllowSelected, "allow-selected"},
+                                                         {AccessControlDialog::AllowAll, "allow-all-future"},
+                                                         {AccessControlDialog::DenyAll, "deny-all-future"}};
+                QJsonObject decisionsJson;
+                for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
+                    decisionsJson.insert(it.key().toString(QUuid::WithoutBraces), DecisionLog::decision(it.value()));
+                }
+                auto remember = ac->findChild<QCheckBox*>();
+                auto scope = ac->findChild<QComboBox*>("rememberScope");
+                QJsonValue anchor;
+                if (depth >= 0 && depth < info.hierarchy.size()) {
+                    anchor = DecisionLog::process(info.hierarchy.at(depth));
+                }
+                DecisionLog::write("answer",
+                                   {{"prompt", path},
+                                    {"client", DecisionLog::client(info)},
+                                    {"button", buttons.value(ac->result(), QString::number(ac->result()))},
+                                    {"remember", remember && remember->isChecked()},
+                                    {"pickedDepth", scope && scope->count() > 0 ? scope->currentData().toInt() : -1},
+                                    {"rememberDepth", depth},
+                                    {"anchor", anchor},
+                                    {"decisions", decisionsJson},
+                                    {"future", DecisionLog::decision(future)},
+                                    {"ms", shown.elapsed()}});
+            });
     }
 
     void UnlockPrompt::itemUnlockFinished(const QHash<QUuid, AuthDecision>& decisions,

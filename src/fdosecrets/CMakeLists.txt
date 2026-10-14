@@ -17,6 +17,9 @@ if(KPXC_FEATURE_FDOSECRETS)
         # setting storage
         FdoSecretsSettings.cpp
 
+        # fork-only access log
+        DecisionLog.cpp
+
         # dbus objects
         dbus/DBusClient.cpp
         dbus/DBusMgr.cpp

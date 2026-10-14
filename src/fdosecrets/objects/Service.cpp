@@ -17,6 +17,7 @@
 
 #include "Service.h"
 
+#include "fdosecrets/DecisionLog.h"
 #include "fdosecrets/FdoSecretsPlugin.h"
 #include "fdosecrets/FdoSecretsSettings.h"
 #include "fdosecrets/objects/Collection.h"
@@ -379,6 +380,20 @@ namespace FdoSecrets
                 return QDBusError::InternalError;
             }
         }
+
+        QJsonArray items;
+        for (const auto& obj : asConst(objects)) {
+            if (auto item = qobject_cast<Item*>(obj)) {
+                auto json = DecisionLog::entry(item->backend());
+                json.insert("locked", itemsToUnlock.contains(item));
+                items << json;
+            }
+        }
+        DecisionLog::write("unlock",
+                           {{"client", DecisionLog::client(client->processInfo())},
+                            {"items", items},
+                            {"lockedCollections", collectionsToUnlock.size()},
+                            {"prompt", prompt ? prompt->objectPath().path() : QString()}});
         return {};
     }
 

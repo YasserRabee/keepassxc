@@ -17,6 +17,7 @@
 
 #include "DBusMgr.h"
 
+#include "fdosecrets/DecisionLog.h"
 #include "fdosecrets/objects/Collection.h"
 #include "fdosecrets/objects/Item.h"
 #include "fdosecrets/objects/Prompt.h"
@@ -657,6 +658,7 @@ namespace FdoSecrets
         }
 
         auto client = DBusClientPtr(new DBusClient(this, info));
+        DecisionLog::write("connect", {{"client", DecisionLog::client(info, true)}});
         applyAncestorDecisions(*client);
 
         emit clientConnected(client);
@@ -675,6 +677,29 @@ namespace FdoSecrets
         const auto& ancestor = info.hierarchy.at(depth);
         return ancestor.pid == ancestorPid && ancestor.startTime == ancestorStartTime
                && exePathsTo(info, depth) == exePaths;
+    }
+
+    QJsonObject DBusMgr::AncestorDecisions::toJson() const
+    {
+        QJsonObject itemsJson;
+        for (auto it = items.constBegin(); it != items.constEnd(); ++it) {
+            itemsJson.insert(it.key().toString(QUuid::WithoutBraces), DecisionLog::decision(it.value()));
+        }
+        return {{"anchorPid", qint64(ancestorPid)},
+                {"anchorStart", QString::number(ancestorStartTime)},
+                {"depth", exePaths.size() - 1},
+                {"exePaths", QJsonArray::fromStringList(exePaths)},
+                {"all", DecisionLog::decision(all)},
+                {"items", itemsJson}};
+    }
+
+    QJsonArray DBusMgr::ancestorDecisionsJson() const
+    {
+        QJsonArray all;
+        for (const auto& ad : m_ancestorDecisions) {
+            all << ad.toJson();
+        }
+        return all;
     }
 
     QStringList DBusMgr::AncestorDecisions::exePathsTo(const PeerInfo& info, int depth)
@@ -720,13 +745,22 @@ namespace FdoSecrets
             it->all = forFutureEntries;
         }
         it->items.insert(items);
+        DecisionLog::write("remembered",
+                           {{"client", DecisionLog::client(info)},
+                            {"decision", it->toJson()},
+                            {"allRemembered", ancestorDecisionsJson()}});
     }
 
     void DBusMgr::applyAncestorDecisions(DBusClient& client)
     {
         // drop decisions whose ancestor exited; a reused pid has a different start time
-        m_ancestorDecisions.removeIf(
-            [](const AncestorDecisions& ad) { return readProc(ad.ancestorPid).startTime != ad.ancestorStartTime; });
+        m_ancestorDecisions.removeIf([](const AncestorDecisions& ad) {
+            if (readProc(ad.ancestorPid).startTime == ad.ancestorStartTime) {
+                return false;
+            }
+            DecisionLog::write("dropped", {{"reason", "process exited"}, {"decision", ad.toJson()}});
+            return true;
+        });
 
         // if decisions tied to several processes apply, only the nearest process' count
         const AncestorDecisions* nearest = nullptr;
@@ -738,6 +772,8 @@ namespace FdoSecrets
         if (!nearest) {
             return;
         }
+        DecisionLog::write("applied",
+                           {{"client", DecisionLog::client(client.processInfo())}, {"decision", nearest->toJson()}});
         if (nearest->all != AuthDecision::Undecided) {
             client.setAllAuthorized(nearest->all);
         }
@@ -754,6 +790,10 @@ namespace FdoSecrets
                 return false;
             }
             forgotten << ad;
+            DecisionLog::write("dropped",
+                               {{"reason", "reset or disconnect in settings"},
+                                {"client", DecisionLog::client(client.processInfo())},
+                                {"decision", ad.toJson()}});
             return true;
         });
         // connected clients that got them, e.g. other connections of the same program, forget them too
@@ -769,6 +809,7 @@ namespace FdoSecrets
 
     void DBusMgr::forgetAllDecisions()
     {
+        DecisionLog::write("dropped", {{"reason", "forget all"}, {"allRemembered", ancestorDecisionsJson()}});
         m_ancestorDecisions.clear();
         for (const auto& client : asConst(m_clients)) {
             client->clearAuthorization();
@@ -786,6 +827,7 @@ namespace FdoSecrets
             return;
         }
 
+        DecisionLog::write("disconnect", {{"client", DecisionLog::client((*it)->processInfo())}});
         emit clientDisconnected(*it);
         m_clients.erase(it);
     }

@@ -25,6 +25,7 @@
 #include <QSet>
 
 class QWindow;
+class AccessControlDialog;
 
 class DatabaseWidget;
 class Entry;
@@ -174,6 +175,7 @@ namespace FdoSecrets
         void collectionUnlockFinished(bool accepted);
         void collectionRetired(Collection* coll);
         void itemRetired(Item* item);
+        void logPromptAndAnswer(AccessControlDialog* ac, const DBusClient& client, const QList<Entry*>& entries);
         void
         itemUnlockFinished(const QHash<QUuid, AuthDecision>& results, AuthDecision forFutureEntries, int rememberDepth);
         void unlockItems();
