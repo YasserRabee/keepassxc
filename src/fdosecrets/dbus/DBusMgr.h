@@ -217,14 +217,21 @@ namespace FdoSecrets
         /**
          * Remember the user's decisions for later clients that run the same executable and that
          * the same, still running, process starts the same way, through the same executables.
-         * That process is @a client's hierarchy[@a depth]: 0 is the client's process itself, up to
-         * PeerInfo::maxRememberDepth(). Only remembered (not once) decisions are kept.
-         * Nothing is saved to disk.
+         * That process is the client's hierarchy[@a depth] in @a info: 0 is the client's process
+         * itself, up to PeerInfo::maxRememberDepth(). The client may have disconnected already.
+         * Only remembered (not once) decisions are kept. Nothing is saved to disk.
          */
-        void rememberForAncestor(const DBusClient& client,
+        void rememberForAncestor(const PeerInfo& info,
                                  int depth,
                                  const QHash<QUuid, AuthDecision>& decisions,
                                  AuthDecision forFutureEntries);
+
+        /**
+         * The executable of the process the user last tied decisions to, if that was an ancestor of
+         * the client, such as a coding agent; the access dialog preselects the nearest process
+         * running it. Empty if none.
+         */
+        const QString& lastAncestorExe() const;
 
         /**
          * Give a new client the decisions remembered by rememberForAncestor that apply to it. If
@@ -238,7 +245,8 @@ namespace FdoSecrets
         void forgetAncestorDecisions(const DBusClient& client);
 
         /**
-         * Forget all decisions: those remembered by rememberForAncestor and those of connected clients.
+         * Forget all decisions: those remembered by rememberForAncestor and those of connected clients,
+         * and lastAncestorExe().
          */
         void forgetAllDecisions();
 
@@ -375,6 +383,7 @@ namespace FdoSecrets
         };
         QJsonArray ancestorDecisionsJson() const;
         QList<AncestorDecisions> m_ancestorDecisions{};
+        QString m_lastAncestorExe{};
 
         friend class ::TestFdoSecrets;
     };

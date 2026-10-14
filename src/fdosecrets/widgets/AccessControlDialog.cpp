@@ -37,7 +37,8 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
                                          const QList<Entry*>& entries,
                                          const QString& app,
                                          const FdoSecrets::PeerInfo& info,
-                                         AuthOptions authOptions)
+                                         AuthOptions authOptions,
+                                         const QString& lastAncestorExe)
     : m_ui(new Ui::AccessControlDialog())
     , m_rememberCheck()
     , m_model(new EntryModel(entries))
@@ -84,13 +85,18 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
 
     // which process a remembered decision is tied to: the client itself or one of its ancestors
     auto maxDepth = authOptions.testFlag(AuthOption::Remember) ? info.maxRememberDepth() : -1;
+    // by default the nearest process running the program picked last time, e.g. a coding agent,
+    // else its parent, e.g. the shell or script that runs it
+    auto preselected = -1;
     for (int i = 0; i <= maxDepth; ++i) {
         const auto& proc = info.hierarchy.at(i);
         m_ui->rememberScope->addItem(tr("%1 (PID: %2)").arg(proc.name, QString::number(proc.pid)), i);
         m_ui->rememberScope->setItemData(i, Qt::convertFromPlainText(proc.exePath), Qt::ToolTipRole);
+        if (i > 0 && preselected < 0 && proc.exePath == lastAncestorExe) {
+            preselected = i;
+        }
     }
-    // by default its parent, e.g. the shell or script that runs it
-    m_ui->rememberScope->setCurrentIndex(qMin(1, maxDepth));
+    m_ui->rememberScope->setCurrentIndex(preselected < 0 ? qMin(1, maxDepth) : preselected);
     m_ui->rememberScopeRow->setVisible(maxDepth >= 0);
 
     QString remember = tr("Your decision will be remembered for the duration while both the requesting client "

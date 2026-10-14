@@ -106,7 +106,6 @@ namespace FdoSecrets::DecisionLog
             offered << QString("%1 %2").arg(info.hierarchy.at(i).name).arg(info.hierarchy.at(i).pid);
         }
         obj.insert("offered", offered);
-        obj.insert("defaultDepth", qMin(1, maxDepth));
 
         // the first ancestor the picker left out, and the broad reason
         QJsonObject stop;
