@@ -66,6 +66,8 @@ rollback)
         [[ -d $HOME/.cache/keepassxc ]] && mv "$HOME/.cache/keepassxc" "$BACKUP/cache.fork-$STAMP"
         cp -a "$BACKUP/cache" "$HOME/.cache/keepassxc"
     fi
+    # 2.8 moved the cache file here; without it, a later 2.8 picks up the restored one again
+    [[ -d $HOME/.local/state/keepassxc ]] && mv "$HOME/.local/state/keepassxc" "$BACKUP/state.fork-$STAMP"
     (cd "$BACKUP/manifests" && find . -type f -print0) | while IFS= read -r -d '' m; do
         cp -a "$BACKUP/manifests/$m" "/${m#./}"
     done
