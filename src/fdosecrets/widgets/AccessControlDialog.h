@@ -61,7 +61,8 @@ public:
                                  const QList<Entry*>& entries,
                                  const QString& app,
                                  const FdoSecrets::PeerInfo& info,
-                                 AuthOptions authOptions = AuthOption::Remember | AuthOption::PerEntryDeny);
+                                 AuthOptions authOptions = AuthOption::Remember | AuthOption::PerEntryDeny,
+                                 const QString& lastAncestorExe = {});
     ~AccessControlDialog() override;
 
     enum DialogCode

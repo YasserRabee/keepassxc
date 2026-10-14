@@ -404,8 +404,9 @@ namespace FdoSecrets
         }
         if (!entries.isEmpty()) {
             QString app = tr("%1 (PID: %2)").arg(client->name()).arg(client->pid());
+            m_clientInfo = client->processInfo();
             auto ac = new AccessControlDialog(
-                findWindow(m_windowId), entries, app, client->processInfo(), AuthOption::Remember);
+                findWindow(m_windowId), entries, app, m_clientInfo, AuthOption::Remember, dbus()->lastAncestorExe());
             connect(ac, &AccessControlDialog::finished, this, &UnlockPrompt::itemUnlockFinished);
             connect(ac, &AccessControlDialog::finished, ac, &AccessControlDialog::deleteLater);
             // the dialog is asking about entries that do not survive the database
@@ -429,38 +430,37 @@ namespace FdoSecrets
                                           AuthDecision forFutureEntries,
                                           int rememberDepth)
     {
+        QHash<QUuid, AuthDecision> applied;
+        for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
+            // the item retired while the dialog was open, it can no longer be unlocked
+            if (!m_entryToItems.value(it.key())) {
+                m_numRejected += 1;
+                continue;
+            }
+            applied.insert(it.key(), it.value());
+        }
+        // even if the client is gone: tools like gh give up waiting after a few seconds, and the
+        // decision is for their later runs anyway
+        dbus()->rememberForAncestor(m_clientInfo, rememberDepth, applied, forFutureEntries);
+
         auto client = m_client.lock();
         if (!client) {
             // client already gone
             qDebug() << "DBus client gone before item unlocking finish";
             return;
         }
-        QHash<QUuid, AuthDecision> applied;
-        for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
-            const auto& uuid = it.key();
-            // get back the corresponding item
-            auto item = m_entryToItems.value(uuid);
-            if (!item) {
-                // the item retired while the dialog was open, it can no longer be unlocked
-                m_numRejected += 1;
-                continue;
-            }
-
+        for (auto it = applied.constBegin(); it != applied.constEnd(); ++it) {
             // set auth
-            client->setItemAuthorized(uuid, it.value());
-            applied.insert(uuid, it.value());
+            client->setItemAuthorized(it.key(), it.value());
 
-            if (client->itemAuthorized(uuid)) {
-                m_unlocked += item->objectPath();
+            if (client->itemAuthorized(it.key())) {
+                m_unlocked += m_entryToItems.value(it.key())->objectPath();
             } else {
                 m_numRejected += 1;
             }
         }
         if (forFutureEntries != AuthDecision::Undecided) {
             client->setAllAuthorized(forFutureEntries);
-        }
-        if (auto dbus = client->dbus()) {
-            dbus->rememberForAncestor(*client, rememberDepth, applied, forFutureEntries);
         }
         // if anything is not unlocked, treat the whole prompt as dismissed
         // so the client has a chance to handle the error

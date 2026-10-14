@@ -59,11 +59,19 @@ namespace FdoSecrets
             return -1;
         }
         const auto& self = hierarchy.front();
+        // a client moved into a cgroup of its own when started, like a snap, is judged by its parent's
+        // cgroup, if the grandparent is in it too: launchers like the desktop shell or a terminal are not
+        // in the cgroup of the process that started them
+        auto group = self.cgroup;
+        if (hierarchy.size() > 2 && hierarchy.at(1).cgroup != group
+            && hierarchy.at(1).cgroup == hierarchy.at(2).cgroup) {
+            group = hierarchy.at(1).cgroup;
+        }
         int depth = 0;
         for (int i = 1; i < hierarchy.size(); ++i) {
             const auto& proc = hierarchy.at(i);
             auto sameTerminal = pty(proc.tty) && proc.tty == self.tty;
-            auto sameGroup = ownGroup(proc.cgroup) && proc.cgroup == self.cgroup;
+            auto sameGroup = ownGroup(proc.cgroup) && proc.cgroup == group;
             if (!identified(proc) || !(sameTerminal || sameGroup)) {
                 break;
             }

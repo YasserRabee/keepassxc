@@ -191,6 +191,8 @@ namespace FdoSecrets
 
         // info about calling client
         QWeakPointer<DBusClient> m_client;
+        // kept to remember the user's answer for an ancestor after the client is gone
+        PeerInfo m_clientInfo;
         QString m_windowId;
     };
 

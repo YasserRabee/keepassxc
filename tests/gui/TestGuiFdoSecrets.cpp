@@ -921,13 +921,17 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
 
     // decisions can be tied to the client itself (0) and its ancestors up to the first one in neither
     // the same terminal nor the same cgroup, so never to e.g. the desktop shell or systemd --user
-    auto maxDepth = [](const QList<ProcInfo>& hierarchy) {
-        return PeerInfo{{}, 0, true, hierarchy}.maxRememberDepth();
-    };
+    auto peer = [](const QList<ProcInfo>& hierarchy) { return PeerInfo{{}, hierarchy.first().pid, true, hierarchy}; };
+    auto maxDepth = [&](const QList<ProcInfo>& hierarchy) { return peer(hierarchy).maxRememberDepth(); };
     COMPARE(maxDepth({spawned(glab), script, agent, desktop}), 2);
+    const auto systemd = running(QStringLiteral("/usr/lib/systemd/systemd"), QStringLiteral("/init.scope"));
     auto chrome = spawned(QStringLiteral("/opt/google/chrome/chrome"));
     chrome.cgroup = QStringLiteral("/app.slice/app-chrome.scope");
-    COMPARE(maxDepth({chrome, desktop}), 0);
+    COMPARE(maxDepth({chrome, desktop, systemd}), 0);
+    // a client moved into a cgroup of its own when started, like a snap, is judged by its parent's
+    auto snap = spawned(QStringLiteral("/snap/glab/6906/glab"));
+    snap.cgroup = QStringLiteral("/app.slice/snap.glab.glab-1.scope");
+    COMPARE(maxDepth({snap, spawned(zsh), agent, desktop}), 2);
     // the same pseudo terminal is enough, e.g. without systemd
     auto inTerminal = [](ProcInfo proc, int tty) {
         proc.cgroup.clear();
@@ -984,6 +988,28 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/node")), agent})->itemKnown(uuid));
     VERIFY(!client({spawned(glab), spawned(QStringLiteral("/usr/bin/npm")), spawned(zsh), agent})->itemKnown(uuid));
 
+    // the next prompt preselects the program picked last time, here the agent, not the parent
+    const auto rclone = QStringLiteral("/usr/bin/rclone");
+    dbus->overrideClient(client({spawned(rclone), spawned(zsh), agent}));
+    VERIFY(unlockWithAccessDialog(service, item, true, false, -1));
+    dbus->overrideClient(m_client);
+    VERIFY(client({spawned(rclone), spawned(zsh), agent})->itemAuthorized(uuid));
+
+    // the answer is remembered even if the client left before it, as gh does after a few seconds
+    const auto aws = QStringLiteral("/usr/bin/aws");
+    auto leaving = client({spawned(aws), spawned(zsh), agent});
+    dbus->overrideClient(leaving);
+    DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
+    VERIFY(unlocked.isEmpty());
+    auto prompt = getProxy<PromptProxy>(promptPath);
+    VERIFY(prompt);
+    DBUS_VERIFY(prompt->Prompt(""));
+    processEvents();
+    dbus->overrideClient(m_client);
+    leaving.reset();
+    VERIFY(driveAccessControlDialog(true, false, 2));
+    VERIFY(client({spawned(aws), spawned(zsh), agent})->itemAuthorized(uuid));
+
     // without Remember, Allow All & Future stays with the connection, as before
     const auto hub = QStringLiteral("/usr/bin/hub");
     dbus->overrideClient(client({spawned(hub), script, agent}));
@@ -993,15 +1019,15 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
 
     // tied to the program itself: its later connections are not asked, its later runs are
     const auto gh = QStringLiteral("/usr/bin/gh");
-    dbus->rememberForAncestor(*client({running(gh, tab), script}), 0, {{uuid, AuthDecision::Allowed}}, {});
+    dbus->rememberForAncestor(peer({running(gh, tab), script}), 0, {{uuid, AuthDecision::Allowed}}, {});
     VERIFY(client({running(gh, tab), script})->itemAuthorized(uuid));
     VERIFY(!client({spawned(gh), script})->itemKnown(uuid));
 
     // if decisions tied to several processes apply, only the nearest one's count
     const auto tea = QStringLiteral("/usr/bin/tea");
     const auto shell = running(zsh, tab);
-    dbus->rememberForAncestor(*client({spawned(tea), spawned(zsh), agent}), 2, {}, AuthDecision::Denied);
-    dbus->rememberForAncestor(*client({spawned(tea), shell, agent}), 1, {{uuid, AuthDecision::Allowed}}, {});
+    dbus->rememberForAncestor(peer({spawned(tea), spawned(zsh), agent}), 2, {}, AuthDecision::Denied);
+    dbus->rememberForAncestor(peer({spawned(tea), shell, agent}), 1, {{uuid, AuthDecision::Allowed}}, {});
     VERIFY(client({spawned(tea), shell, agent})->itemAuthorized(uuid));
     auto otherShell = client({spawned(tea), spawned(zsh), agent});
     VERIFY(otherShell->itemKnown(uuid));
@@ -1009,17 +1035,17 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
 
     // Deny All & Future is passed on too
     const auto curl = QStringLiteral("/usr/bin/curl");
-    dbus->rememberForAncestor(*client({spawned(curl), script}), 1, {}, AuthDecision::Denied);
+    dbus->rememberForAncestor(peer({spawned(curl), script}), 1, {}, AuthDecision::Denied);
     auto denied = client({spawned(curl), script});
     VERIFY(denied->itemKnown(uuid));
     VERIFY(!denied->itemAuthorized(uuid));
 
     // once decisions are not
     const auto tool = QStringLiteral("/usr/bin/secret-tool");
-    dbus->rememberForAncestor(*client({spawned(tool), script}), 1, {{uuid, AuthDecision::AllowedOnce}}, {});
+    dbus->rememberForAncestor(peer({spawned(tool), script}), 1, {{uuid, AuthDecision::AllowedOnce}}, {});
     VERIFY(!client({spawned(tool), script})->itemKnown(uuid));
     // and nothing is tied to an ancestor that does not qualify
-    dbus->rememberForAncestor(*client({spawned(tool), script, desktop}), 2, {}, AuthDecision::Allowed);
+    dbus->rememberForAncestor(peer({spawned(tool), script, desktop}), 2, {}, AuthDecision::Allowed);
     VERIFY(!client({spawned(tool), script, desktop})->itemKnown(uuid));
 
     // Reset/Disconnect in the settings forgets the decisions that apply to that client

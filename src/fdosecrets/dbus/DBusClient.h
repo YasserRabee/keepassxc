@@ -98,7 +98,8 @@ namespace FdoSecrets
          * (unknown executable or start time), or is in neither the same pseudo terminal nor the same
          * cgroup (a systemd scope per app or terminal tab, not a whole login session) as this process.
          * That leaves out processes that start programs for anyone, like systemd --user or the
-         * desktop shell.
+         * desktop shell. A process moved into a cgroup of its own when started, like a snap, counts
+         * as in its parent's cgroup if its grandparent is in that cgroup too.
          */
         int maxRememberDepth() const;
 

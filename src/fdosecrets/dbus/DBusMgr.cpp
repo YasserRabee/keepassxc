@@ -686,7 +686,7 @@ namespace FdoSecrets
         return paths;
     }
 
-    void DBusMgr::rememberForAncestor(const DBusClient& client,
+    void DBusMgr::rememberForAncestor(const PeerInfo& info,
                                       int depth,
                                       const QHash<QUuid, AuthDecision>& decisions,
                                       AuthDecision forFutureEntries)
@@ -699,12 +699,14 @@ namespace FdoSecrets
                 items.insert(it.key(), it.value());
             }
         }
-        const auto& info = client.processInfo();
         if ((items.isEmpty() && !remembered(forFutureEntries)) || depth < 0 || depth > info.maxRememberDepth()) {
             return;
         }
         const auto& ancestor = info.hierarchy.at(depth);
         auto exePaths = AncestorDecisions::exePathsTo(info, depth);
+        if (depth > 0) {
+            m_lastAncestorExe = ancestor.exePath;
+        }
 
         auto it =
             std::find_if(m_ancestorDecisions.begin(), m_ancestorDecisions.end(), [&](const AncestorDecisions& ad) {
@@ -767,9 +769,15 @@ namespace FdoSecrets
         }
     }
 
+    const QString& DBusMgr::lastAncestorExe() const
+    {
+        return m_lastAncestorExe;
+    }
+
     void DBusMgr::forgetAllDecisions()
     {
         m_ancestorDecisions.clear();
+        m_lastAncestorExe.clear();
         for (const auto& client : asConst(m_clients)) {
             client->clearAuthorization();
         }
