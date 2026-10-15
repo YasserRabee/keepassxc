@@ -63,6 +63,15 @@ namespace FdoSecrets::DecisionLog
         }
     }
 
+    QJsonObject decisions(const QHash<QUuid, AuthDecision>& decisions)
+    {
+        QJsonObject obj;
+        for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
+            obj.insert(it.key().toString(QUuid::WithoutBraces), decision(it.value()));
+        }
+        return obj;
+    }
+
     QJsonObject entry(const Entry* entry)
     {
         if (!entry) {

@@ -414,6 +414,9 @@ namespace FdoSecrets
             logPromptAndAnswer(ac, *client, entries);
             connect(ac, &AccessControlDialog::finished, this, &UnlockPrompt::itemUnlockFinished);
             connect(ac, &AccessControlDialog::finished, ac, &AccessControlDialog::deleteLater);
+            // an answer to another dialog may decide everything this one asks, e.g. when several runs
+            // of a tool asked while the user was away
+            connect(dbus().data(), &DBusMgr::decisionRemembered, ac, [this, ac]() { answerFromRemembered(ac); });
             // the dialog is asking about entries that do not survive the database
             // locking or closing. Withdraw the question in that case, as if the
             // user rejected it.
@@ -451,38 +454,63 @@ namespace FdoSecrets
         shown.start();
         auto info = client.processInfo();
         // connected before the handler that applies the answer, so the answer is logged before what it remembers
-        connect(
-            ac,
-            &AccessControlDialog::finished,
-            this,
-            [this, ac, scope, path, info, shown](
-                const QHash<QUuid, AuthDecision>& decisions, AuthDecision future, int depth) {
-                static const QHash<int, QString> buttons{{AccessControlDialog::Rejected, "closed"},
-                                                         {AccessControlDialog::AllowSelected, "allow-selected"},
-                                                         {AccessControlDialog::AllowAll, "allow-all-future"},
-                                                         {AccessControlDialog::DenyAll, "deny-all-future"}};
-                QJsonObject decisionsJson;
-                for (auto it = decisions.constBegin(); it != decisions.constEnd(); ++it) {
-                    decisionsJson.insert(it.key().toString(QUuid::WithoutBraces), DecisionLog::decision(it.value()));
-                }
-                auto remember = ac->findChild<QCheckBox*>();
-                QJsonValue anchor;
-                if (depth >= 0 && depth < info.hierarchy.size()) {
-                    anchor = DecisionLog::process(info.hierarchy.at(depth));
-                }
-                DecisionLog::write("answer",
-                                   {{"prompt", path},
-                                    {"client", DecisionLog::client(info)},
-                                    {"button", buttons.value(ac->result(), QString::number(ac->result()))},
-                                    {"remember", remember && remember->isChecked()},
-                                    {"pickedDepth", scope && scope->count() > 0 ? scope->currentData().toInt() : -1},
-                                    {"rememberDepth", depth},
-                                    {"anchor", anchor},
-                                    {"decisions", decisionsJson},
-                                    {"future", DecisionLog::decision(future)},
-                                    {"ms", shown.elapsed()},
-                                    {"clientGone", !m_client.lock()}});
-            });
+        connect(ac,
+                &AccessControlDialog::finished,
+                this,
+                [this, ac, scope, path, info, shown](
+                    const QHash<QUuid, AuthDecision>& decisions, AuthDecision future, int depth) {
+                    static const QHash<int, QString> buttons{{AccessControlDialog::Rejected, "closed"},
+                                                             {AccessControlDialog::AllowSelected, "allow-selected"},
+                                                             {AccessControlDialog::AllowAll, "allow-all-future"},
+                                                             {AccessControlDialog::DenyAll, "deny-all-future"}};
+                    auto remember = ac->findChild<QCheckBox*>();
+                    QJsonValue anchor;
+                    if (depth >= 0 && depth < info.hierarchy.size()) {
+                        anchor = DecisionLog::process(info.hierarchy.at(depth));
+                    }
+                    DecisionLog::write(
+                        "answer",
+                        {{"prompt", path},
+                         {"client", DecisionLog::client(info)},
+                         {"button", buttons.value(ac->result(), QString::number(ac->result()))},
+                         {"remember", remember && remember->isChecked()},
+                         {"pickedDepth", scope && scope->count() > 0 ? scope->currentData().toInt() : -1},
+                         {"rememberDepth", depth},
+                         {"anchor", anchor},
+                         {"decisions", DecisionLog::decisions(decisions)},
+                         {"future", DecisionLog::decision(future)},
+                         {"ms", shown.elapsed()},
+                         {"clientGone", !m_client.lock()}});
+                });
+    }
+
+    void UnlockPrompt::answerFromRemembered(AccessControlDialog* ac)
+    {
+        // this dialog's own answer was just remembered, it is closing already
+        if (!ac->isVisible()) {
+            return;
+        }
+        QHash<QUuid, AuthDecision> decisions;
+        for (auto it = m_entryToItems.constBegin(); it != m_entryToItems.constEnd(); ++it) {
+            auto decision = dbus()->rememberedDecision(m_clientInfo, it.key());
+            if (decision == AuthDecision::Undecided) {
+                return;
+            }
+            decisions.insert(it.key(), decision);
+        }
+        DecisionLog::write("auto-answered",
+                           {{"prompt", objectPath().path()},
+                            {"client", DecisionLog::client(m_clientInfo)},
+                            {"decisions", DecisionLog::decisions(decisions)},
+                            {"clientGone", !m_client.lock()}});
+        // the client gets what a new connection would get, including Allow All & Future
+        if (auto client = m_client.lock()) {
+            dbus()->applyAncestorDecisions(*client);
+        }
+        // close the dialog without handling it as the user's answer
+        disconnect(ac, &AccessControlDialog::finished, this, nullptr);
+        ac->reject();
+        itemUnlockFinished(decisions, AuthDecision::Undecided, -1);
     }
 
     void UnlockPrompt::itemUnlockFinished(const QHash<QUuid, AuthDecision>& decisions,

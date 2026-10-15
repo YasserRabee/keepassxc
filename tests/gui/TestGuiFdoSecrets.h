@@ -113,6 +113,9 @@ private:
     bool driveNewDatabaseWizard();
     // rememberDepth: which process to tie remembered decisions to, -1 keeps the default
     bool driveAccessControlDialog(bool remember = true, bool includeFutureEntries = false, int rememberDepth = -1);
+    // asks to unlock @a item, which opens the access dialog
+    QSharedPointer<PromptProxy> promptUnlock(const QSharedPointer<ServiceProxy>& service,
+                                             const QSharedPointer<ItemProxy>& item);
     bool unlockWithAccessDialog(const QSharedPointer<ServiceProxy>& service,
                                 const QSharedPointer<ItemProxy>& item,
                                 bool remember,

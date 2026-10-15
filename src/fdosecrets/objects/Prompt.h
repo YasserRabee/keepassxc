@@ -25,8 +25,8 @@
 #include <QSet>
 
 class QWindow;
-class AccessControlDialog;
 
+class AccessControlDialog;
 class DatabaseWidget;
 class Entry;
 
@@ -178,6 +178,8 @@ namespace FdoSecrets
         void logPromptAndAnswer(AccessControlDialog* ac, const DBusClient& client, const QList<Entry*>& entries);
         void
         itemUnlockFinished(const QHash<QUuid, AuthDecision>& results, AuthDecision forFutureEntries, int rememberDepth);
+        // answers @a ac with the remembered decisions if they decide all its entries
+        void answerFromRemembered(AccessControlDialog* ac);
         void unlockItems();
 
         QList<QPointer<Collection>> m_collections;

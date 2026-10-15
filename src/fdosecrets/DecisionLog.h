@@ -38,6 +38,7 @@ namespace FdoSecrets
         void write(const QString& event, QJsonObject fields);
 
         QString decision(AuthDecision decision);
+        QJsonObject decisions(const QHash<QUuid, AuthDecision>& decisions);
         QJsonObject entry(const Entry* entry);
         QJsonObject process(const ProcInfo& proc);
         // address, pid, executable and the command's first two words; with the chain, every
