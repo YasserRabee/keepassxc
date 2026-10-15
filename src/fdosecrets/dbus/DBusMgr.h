@@ -232,6 +232,12 @@ namespace FdoSecrets
         const QString& lastAncestorExe() const;
 
         /**
+         * The decision remembered by rememberForAncestor for entry @a uuid that applies to a client
+         * with @a info, tied to the nearest process as in applyAncestorDecisions. Undecided if none.
+         */
+        AuthDecision rememberedDecision(const PeerInfo& info, const QUuid& uuid) const;
+
+        /**
          * Give a new client the decisions remembered by rememberForAncestor that apply to it. If
          * several apply, only those tied to the nearest process.
          */
@@ -252,6 +258,8 @@ namespace FdoSecrets
         void clientConnected(const DBusClientPtr& client);
         void clientDisconnected(const DBusClientPtr& client);
         void error(const QString& msg);
+        // rememberForAncestor remembered a decision, which may answer other open access dialogs
+        void decisionRemembered();
 
     private slots:
         void emitCollectionCreated(Collection* coll);
@@ -379,6 +387,7 @@ namespace FdoSecrets
             static QStringList exePathsTo(const PeerInfo& info, int depth);
         };
         QList<AncestorDecisions> m_ancestorDecisions{};
+        const AncestorDecisions* nearestAncestorDecisions(const PeerInfo& info) const;
         QString m_lastAncestorExe{};
 
         friend class ::TestFdoSecrets;

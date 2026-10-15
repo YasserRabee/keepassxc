@@ -42,6 +42,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QSignalSpy>
 #include <QTest>
@@ -999,16 +1000,55 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     const auto aws = QStringLiteral("/usr/bin/aws");
     auto leaving = client({spawned(aws), spawned(zsh), agent});
     dbus->overrideClient(leaving);
-    DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
-    VERIFY(unlocked.isEmpty());
-    auto prompt = getProxy<PromptProxy>(promptPath);
-    VERIFY(prompt);
-    DBUS_VERIFY(prompt->Prompt(""));
-    processEvents();
+    VERIFY(promptUnlock(service, item));
     dbus->overrideClient(m_client);
     leaving.reset();
     VERIFY(driveAccessControlDialog(true, false, 2));
     VERIFY(client({spawned(aws), spawned(zsh), agent})->itemAuthorized(uuid));
+
+    // an answer also answers the other open dialogs it decides, e.g. of runs that asked while the
+    // user was away: here one still waiting and one that gave up, but not another program's
+    auto dialogFor = [](uint pid) -> AccessControlDialog* {
+        for (auto w : QApplication::topLevelWidgets()) {
+            auto dlg = qobject_cast<AccessControlDialog*>(w);
+            if (dlg && dlg->isVisible()
+                && dlg->findChild<QLabel*>("appLabel")->text().contains(QStringLiteral("(PID: %1)").arg(pid))) {
+                return dlg;
+            }
+        }
+        return nullptr;
+    };
+    const auto kubectl = QStringLiteral("/usr/bin/kubectl");
+    auto asked = client({spawned(kubectl), spawned(zsh), agent});
+    auto waiting = client({spawned(kubectl), spawned(zsh), agent});
+    auto gaveUp = client({spawned(kubectl), spawned(zsh), agent});
+    auto otherProgram = client({spawned(QStringLiteral("/usr/bin/helm")), spawned(zsh), agent});
+    QSharedPointer<PromptProxy> waitingPrompt;
+    for (const auto& c : {asked, waiting, gaveUp, otherProgram}) {
+        dbus->overrideClient(c);
+        auto prompt = promptUnlock(service, item);
+        VERIFY(prompt && dialogFor(c->pid()));
+        if (c == waiting) {
+            waitingPrompt = prompt;
+        }
+    }
+    dbus->overrideClient(m_client);
+    QSignalSpy waitingCompleted(waitingPrompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
+    VERIFY(waitingCompleted.isValid());
+    auto gaveUpPid = gaveUp->pid();
+    gaveUp.reset();
+    auto askedDialog = dialogFor(asked->pid());
+    askedDialog->findChild<QComboBox*>("rememberScope")->setCurrentIndex(2);
+    askedDialog->done(AccessControlDialog::AllowSelected);
+    processEvents();
+    VERIFY(!dialogFor(waiting->pid()));
+    VERIFY(waitForSignal(waitingCompleted, 1));
+    VERIFY(waiting->itemAuthorized(uuid));
+    VERIFY(!dialogFor(gaveUpPid));
+    auto otherDialog = dialogFor(otherProgram->pid());
+    VERIFY(otherDialog);
+    otherDialog->reject();
+    VERIFY(!otherProgram->itemKnown(uuid));
 
     // without Remember, Allow All & Future stays with the connection, as before
     const auto hub = QStringLiteral("/usr/bin/hub");
@@ -2150,19 +2190,28 @@ TestGuiFdoSecrets::encryptPassword(QByteArray value, QString contentType, const 
     return m_clientCipher->encrypt(ss.unmarshal(m_plugin->dbus())).marshal();
 }
 
+QSharedPointer<PromptProxy> TestGuiFdoSecrets::promptUnlock(const QSharedPointer<ServiceProxy>& service,
+                                                            const QSharedPointer<ItemProxy>& item)
+{
+    DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
+    VERIFY(unlocked.isEmpty());
+    auto prompt = getProxy<PromptProxy>(promptPath);
+    VERIFY(prompt);
+    DBUS_VERIFY(prompt->Prompt(""));
+    processEvents();
+    return prompt;
+}
+
 bool TestGuiFdoSecrets::unlockWithAccessDialog(const QSharedPointer<ServiceProxy>& service,
                                                const QSharedPointer<ItemProxy>& item,
                                                bool remember,
                                                bool includeFutureEntries,
                                                int rememberDepth)
 {
-    DBUS_GET2(unlocked, promptPath, service->Unlock({QDBusObjectPath(item->path())}));
-    VERIFY(unlocked.isEmpty());
-    auto prompt = getProxy<PromptProxy>(promptPath);
+    auto prompt = promptUnlock(service, item);
     VERIFY(prompt);
     QSignalSpy spyPromptCompleted(prompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
     VERIFY(spyPromptCompleted.isValid());
-    DBUS_VERIFY(prompt->Prompt(""));
     VERIFY(driveAccessControlDialog(remember, includeFutureEntries, rememberDepth));
     VERIFY(waitForSignal(spyPromptCompleted, 1));
     return true;

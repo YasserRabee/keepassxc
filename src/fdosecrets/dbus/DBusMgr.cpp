@@ -722,6 +722,25 @@ namespace FdoSecrets
             it->all = forFutureEntries;
         }
         it->items.insert(items);
+        emit decisionRemembered();
+    }
+
+    const DBusMgr::AncestorDecisions* DBusMgr::nearestAncestorDecisions(const PeerInfo& info) const
+    {
+        // if decisions tied to several processes apply, only the nearest process' count
+        const AncestorDecisions* nearest = nullptr;
+        for (const auto& ad : m_ancestorDecisions) {
+            if (ad.appliesTo(info) && (!nearest || ad.exePaths.size() < nearest->exePaths.size())) {
+                nearest = &ad;
+            }
+        }
+        return nearest;
+    }
+
+    AuthDecision DBusMgr::rememberedDecision(const PeerInfo& info, const QUuid& uuid) const
+    {
+        auto nearest = nearestAncestorDecisions(info);
+        return nearest ? nearest->items.value(uuid, nearest->all) : AuthDecision::Undecided;
     }
 
     void DBusMgr::applyAncestorDecisions(DBusClient& client)
@@ -730,13 +749,7 @@ namespace FdoSecrets
         m_ancestorDecisions.removeIf(
             [](const AncestorDecisions& ad) { return readProc(ad.ancestorPid).startTime != ad.ancestorStartTime; });
 
-        // if decisions tied to several processes apply, only the nearest process' count
-        const AncestorDecisions* nearest = nullptr;
-        for (const auto& ad : asConst(m_ancestorDecisions)) {
-            if (ad.appliesTo(client.processInfo()) && (!nearest || ad.exePaths.size() < nearest->exePaths.size())) {
-                nearest = &ad;
-            }
-        }
+        auto nearest = nearestAncestorDecisions(client.processInfo());
         if (!nearest) {
             return;
         }

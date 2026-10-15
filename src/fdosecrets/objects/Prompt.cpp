@@ -409,6 +409,9 @@ namespace FdoSecrets
                 findWindow(m_windowId), entries, app, m_clientInfo, AuthOption::Remember, dbus()->lastAncestorExe());
             connect(ac, &AccessControlDialog::finished, this, &UnlockPrompt::itemUnlockFinished);
             connect(ac, &AccessControlDialog::finished, ac, &AccessControlDialog::deleteLater);
+            // an answer to another dialog may decide everything this one asks, e.g. when several runs
+            // of a tool asked while the user was away
+            connect(dbus().data(), &DBusMgr::decisionRemembered, ac, [this, ac]() { answerFromRemembered(ac); });
             // the dialog is asking about entries that do not survive the database
             // locking or closing. Withdraw the question in that case, as if the
             // user rejected it.
@@ -424,6 +427,30 @@ namespace FdoSecrets
         } else {
             itemUnlockFinished({}, AuthDecision::Undecided, -1);
         }
+    }
+
+    void UnlockPrompt::answerFromRemembered(AccessControlDialog* ac)
+    {
+        // this dialog's own answer was just remembered, it is closing already
+        if (!ac->isVisible()) {
+            return;
+        }
+        QHash<QUuid, AuthDecision> decisions;
+        for (auto it = m_entryToItems.constBegin(); it != m_entryToItems.constEnd(); ++it) {
+            auto decision = dbus()->rememberedDecision(m_clientInfo, it.key());
+            if (decision == AuthDecision::Undecided) {
+                return;
+            }
+            decisions.insert(it.key(), decision);
+        }
+        // the client gets what a new connection would get, including Allow All & Future
+        if (auto client = m_client.lock()) {
+            dbus()->applyAncestorDecisions(*client);
+        }
+        // close the dialog without handling it as the user's answer
+        disconnect(ac, &AccessControlDialog::finished, this, nullptr);
+        ac->reject();
+        itemUnlockFinished(decisions, AuthDecision::Undecided, -1);
     }
 
     void UnlockPrompt::itemUnlockFinished(const QHash<QUuid, AuthDecision>& decisions,
