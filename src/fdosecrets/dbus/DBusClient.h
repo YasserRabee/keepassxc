@@ -91,8 +91,9 @@ namespace FdoSecrets
         }
 
         /**
-         * @brief How far up the hierarchy "Remember" decisions can be tied: 0 is this process itself
-         * (its later connections), 1 its parent, and so on. -1 if this process can't be identified.
+         * @brief How far up the hierarchy "Remember" decisions can be tied without a warning: 0 is this
+         * process itself (its later connections), 1 its parent, and so on. -1 if this process can't be
+         * identified.
          *
          * Walks up from the parent and stops at the first process that is PID 1, can't be identified
          * (unknown executable or start time), or is in neither the same pseudo terminal nor the same
@@ -103,6 +104,13 @@ namespace FdoSecrets
          * parent is an app the desktop started.
          */
         int maxRememberDepth() const;
+
+        /**
+         * @brief How far up the hierarchy the user may still tie "Remember" decisions on purpose: up to
+         * the process below the first one that is PID 1 or can't be identified. At least
+         * maxRememberDepth().
+         */
+        int maxIdentifiedDepth() const;
 
         bool operator==(const PeerInfo& other) const;
         bool operator!=(const PeerInfo& other) const;

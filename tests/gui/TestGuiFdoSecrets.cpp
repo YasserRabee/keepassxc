@@ -965,6 +965,9 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     auto unknown = spawned(glab);
     unknown.startTime = 0;
     COMPARE(maxDepth({unknown, script}), -1);
+    // further up, the user may still pick any process on purpose, up to PID 1 or one that can't be identified
+    COMPARE(peer({chrome, desktop, systemd, init}).maxIdentifiedDepth(), 2);
+    COMPARE(peer({chrome, unknown, desktop}).maxIdentifiedDepth(), 0);
 
     // the first glab asks; the user allows the entry, keeping the default: its parent, the script
     dbus->overrideClient(client({spawned(glab), script, agent}));
@@ -1058,6 +1061,45 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     otherDialog->reject();
     VERIFY(!otherProgram->itemKnown(uuid));
 
+    // those further up are offered after a separator, with a warning when picked, e.g. the desktop
+    // shell for an app started from the dock, but never by default
+    auto fromDock = [&]() {
+        auto proc = chrome;
+        proc.pid = nextPid++;
+        return proc;
+    };
+    auto docked = client({fromDock(), desktop, systemd, init});
+    dbus->overrideClient(docked);
+    auto dockedPrompt = promptUnlock(service, item);
+    dbus->overrideClient(m_client);
+    VERIFY(dockedPrompt);
+    QSignalSpy dockedCompleted(dockedPrompt.data(), SIGNAL(Completed(bool, QDBusVariant)));
+    VERIFY(dockedCompleted.isValid());
+    auto dockedDialog = dialogFor(docked->pid());
+    VERIFY(dockedDialog);
+    auto scope = dockedDialog->findChild<QComboBox*>("rememberScope");
+    auto warning = dockedDialog->findChild<QWidget*>("rememberScopeWarn");
+    // chrome, the separator, gnome-shell and systemd --user, not PID 1
+    COMPARE(scope->count(), 4);
+    COMPARE(scope->currentData().toInt(), 0);
+    VERIFY(!warning->isVisible());
+    scope->setCurrentIndex(scope->findData(1));
+    VERIFY(warning->isVisible());
+    dockedDialog->done(AccessControlDialog::AllowSelected);
+    VERIFY(waitForSignal(dockedCompleted, 1));
+    VERIFY(client({fromDock(), desktop, systemd, init})->itemAuthorized(uuid));
+    // not even once picked: another app from the dock defaults to itself again
+    auto otherApp = fromDock();
+    otherApp.exePath = QStringLiteral("/usr/lib/firefox/firefox");
+    auto otherDocked = client({otherApp, desktop, systemd, init});
+    dbus->overrideClient(otherDocked);
+    VERIFY(promptUnlock(service, item));
+    dbus->overrideClient(m_client);
+    auto otherDockedDialog = dialogFor(otherDocked->pid());
+    VERIFY(otherDockedDialog);
+    COMPARE(otherDockedDialog->findChild<QComboBox*>("rememberScope")->currentIndex(), 0);
+    otherDockedDialog->reject();
+
     // without Remember, Allow All & Future stays with the connection, as before
     const auto hub = QStringLiteral("/usr/bin/hub");
     dbus->overrideClient(client({spawned(hub), script, agent}));
@@ -1092,9 +1134,13 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     const auto tool = QStringLiteral("/usr/bin/secret-tool");
     dbus->rememberForAncestor(peer({spawned(tool), script}), 1, {{uuid, AuthDecision::AllowedOnce}}, {});
     VERIFY(!client({spawned(tool), script})->itemKnown(uuid));
-    // and nothing is tied to an ancestor that does not qualify
-    dbus->rememberForAncestor(peer({spawned(tool), script, desktop}), 2, {}, AuthDecision::Allowed);
-    VERIFY(!client({spawned(tool), script, desktop})->itemKnown(uuid));
+    // and nothing is tied to PID 1 or an ancestor that can't be identified
+    dbus->rememberForAncestor(peer({spawned(tool), script, init}), 2, {}, AuthDecision::Allowed);
+    VERIFY(!client({spawned(tool), script, init})->itemKnown(uuid));
+    auto unidentified = script;
+    unidentified.startTime = 0;
+    dbus->rememberForAncestor(peer({spawned(tool), unidentified, desktop}), 1, {}, AuthDecision::Allowed);
+    VERIFY(!client({spawned(tool), unidentified, desktop})->itemKnown(uuid));
 
     // Reset/Disconnect in the settings forgets the decisions that apply to that client
     dbus->forgetAncestorDecisions(*later);

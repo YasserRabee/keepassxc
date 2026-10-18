@@ -669,7 +669,7 @@ namespace FdoSecrets
     {
         // the same ancestor started the client the same way, through the same executables
         auto depth = exePaths.size() - 1;
-        if (depth < 0 || depth > info.maxRememberDepth()) {
+        if (depth < 0 || depth > info.maxIdentifiedDepth()) {
             return false;
         }
         const auto& ancestor = info.hierarchy.at(depth);
@@ -699,7 +699,7 @@ namespace FdoSecrets
                 items.insert(it.key(), it.value());
             }
         }
-        if ((items.isEmpty() && !remembered(forFutureEntries)) || depth < 0 || depth > info.maxRememberDepth()) {
+        if ((items.isEmpty() && !remembered(forFutureEntries)) || depth < 0 || depth > info.maxIdentifiedDepth()) {
             return;
         }
         const auto& ancestor = info.hierarchy.at(depth);

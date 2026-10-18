@@ -88,16 +88,24 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
     // by default the nearest process running the program picked last time, e.g. a coding agent,
     // else its parent, e.g. the shell or script that runs it
     auto preselected = -1;
-    for (int i = 0; i <= maxDepth; ++i) {
+    // after a separator, the processes further up, like the desktop shell, for a user who knows better;
+    // never preselected
+    auto lastDepth = maxDepth < 0 ? -1 : info.maxIdentifiedDepth();
+    for (int i = 0; i <= lastDepth; ++i) {
         const auto& proc = info.hierarchy.at(i);
+        if (i == maxDepth + 1) {
+            m_ui->rememberScope->insertSeparator(m_ui->rememberScope->count());
+        }
         m_ui->rememberScope->addItem(tr("%1 (PID: %2)").arg(proc.name, QString::number(proc.pid)), i);
-        m_ui->rememberScope->setItemData(i, Qt::convertFromPlainText(proc.exePath), Qt::ToolTipRole);
-        if (i > 0 && preselected < 0 && proc.exePath == lastAncestorExe) {
+        m_ui->rememberScope->setItemData(
+            m_ui->rememberScope->count() - 1, Qt::convertFromPlainText(proc.exePath), Qt::ToolTipRole);
+        if (i > 0 && i <= maxDepth && preselected < 0 && proc.exePath == lastAncestorExe) {
             preselected = i;
         }
     }
     m_ui->rememberScope->setCurrentIndex(preselected < 0 ? qMin(1, maxDepth) : preselected);
     m_ui->rememberScopeRow->setVisible(maxDepth >= 0);
+    m_ui->rememberScopeWarn->hide();
 
     QString remember = tr("Your decision will be remembered for the duration while both the requesting client "
                           "AND KeePassXC are running.");
@@ -114,6 +122,24 @@ AccessControlDialog::AccessControlDialog(QWindow* parent,
     m_rememberCheck->setObjectName("rememberCheck"); // for testing
     m_rememberCheck->setChecked(true);
     connect(m_rememberCheck, &QCheckBox::toggled, m_ui->rememberScopeRow, &QWidget::setEnabled);
+    // a process after the separator may start other programs too
+    auto warnIfFurtherUp = [this, maxDepth, hierarchy = info.hierarchy]() {
+        auto depth = m_ui->rememberScope->currentData().toInt();
+        if (!m_rememberCheck->isChecked() || depth <= maxDepth) {
+            m_ui->rememberScopeWarn->hideMessage();
+            return;
+        }
+        auto client = QFileInfo(hierarchy.first().exePath).fileName().toHtmlEscaped();
+        auto ancestor = hierarchy.at(depth).name.toHtmlEscaped();
+        m_ui->rememberScopeWarn->showMessage(
+            tr("%1 is outside the terminal or app of %2 and may start other programs too. Your decision will "
+               "cover %2 each time %1 starts it the same way, until %1 exits.")
+                .arg(ancestor, client),
+            MessageWidget::Warning,
+            MessageWidget::DisableAutoHide);
+    };
+    connect(m_rememberCheck, &QCheckBox::toggled, this, warnIfFurtherUp);
+    connect(m_ui->rememberScope, &QComboBox::currentIndexChanged, this, warnIfFurtherUp);
     m_ui->buttonBox->addButton(m_rememberCheck, QDialogButtonBox::ActionRole);
     m_rememberCheck->setToolTip(tooltip);
 

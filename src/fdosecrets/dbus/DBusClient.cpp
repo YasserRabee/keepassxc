@@ -26,6 +26,15 @@
 
 namespace FdoSecrets
 {
+    namespace
+    {
+        // PID 1 never exits, so tying a decision to it would cover the executable forever
+        bool identified(const ProcInfo& proc)
+        {
+            return proc.pid > 1 && proc.startTime != 0 && !proc.exePath.isEmpty();
+        }
+    } // namespace
+
     bool ProcInfo::operator==(const ProcInfo& other) const
     {
         return this->pid == other.pid && this->ppid == other.ppid && this->exePath == other.exePath
@@ -40,10 +49,6 @@ namespace FdoSecrets
 
     int PeerInfo::maxRememberDepth() const
     {
-        // PID 1 never exits, so tying a decision to it would cover the executable forever
-        auto identified = [](const ProcInfo& proc) {
-            return proc.pid > 1 && proc.startTime != 0 && !proc.exePath.isEmpty();
-        };
         // a pseudo terminal (/dev/pts/N, majors 136-143), not a console a compositor may run on
         auto pty = [](int tty) {
             auto major = (tty >> 8) & 0xfff;
@@ -82,6 +87,15 @@ namespace FdoSecrets
                 break;
             }
             depth = i;
+        }
+        return depth;
+    }
+
+    int PeerInfo::maxIdentifiedDepth() const
+    {
+        int depth = -1;
+        while (depth + 1 < hierarchy.size() && identified(hierarchy.at(depth + 1))) {
+            ++depth;
         }
         return depth;
     }
