@@ -99,7 +99,8 @@ namespace FdoSecrets
          * cgroup (a systemd scope per app or terminal tab, not a whole login session) as this process.
          * That leaves out processes that start programs for anyone, like systemd --user or the
          * desktop shell. A process moved into a cgroup of its own when started, like a snap, counts
-         * as in its parent's cgroup if its grandparent is in that cgroup too.
+         * as in its parent's cgroup if its grandparent is in that cgroup too, or, for a snap, if its
+         * parent is an app the desktop started.
          */
         int maxRememberDepth() const;
 

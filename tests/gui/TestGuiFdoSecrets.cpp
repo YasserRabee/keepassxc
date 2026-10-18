@@ -933,6 +933,14 @@ void TestGuiFdoSecrets::testServiceUnlockItemsRememberAncestor()
     auto snap = spawned(QStringLiteral("/snap/glab/6906/glab"));
     snap.cgroup = QStringLiteral("/app.slice/snap.glab.glab-1.scope");
     COMPARE(maxDepth({snap, spawned(zsh), agent, desktop}), 2);
+    // or started right by an app the desktop started, like a desktop coding agent
+    auto app = running(QStringLiteral("/usr/lib/claude-desktop/claude-desktop"),
+                       QStringLiteral("/app.slice/app-com.anthropic.Claude-4242.scope"));
+    COMPARE(maxDepth({snap, app, desktop, systemd}), 1);
+    // but not by the desktop shell itself
+    COMPARE(maxDepth({snap, desktop, systemd}), 0);
+    // and only a snap: an app started by an app may have been moved by it, like a launcher does
+    COMPARE(maxDepth({chrome, app, desktop, systemd}), 0);
     // the same pseudo terminal is enough, e.g. without systemd
     auto inTerminal = [](ProcInfo proc, int tty) {
         proc.cgroup.clear();
