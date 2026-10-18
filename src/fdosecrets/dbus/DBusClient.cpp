@@ -61,11 +61,17 @@ namespace FdoSecrets
         const auto& self = hierarchy.front();
         // a client moved into a cgroup of its own when started, like a snap, is judged by its parent's
         // cgroup, if the grandparent is in it too: launchers like the desktop shell or a terminal are not
-        // in the cgroup of the process that started them
+        // in the cgroup of the process that started them. A snap, which always moves itself, is judged by
+        // its parent's cgroup also if that is an app the desktop started: systemd names its cgroup
+        // app-<id>-<random>.scope or app-<id>@<random>.service
         auto group = self.cgroup;
-        if (hierarchy.size() > 2 && hierarchy.at(1).cgroup != group
-            && hierarchy.at(1).cgroup == hierarchy.at(2).cgroup) {
-            group = hierarchy.at(1).cgroup;
+        if (hierarchy.size() > 2 && hierarchy.at(1).cgroup != group) {
+            const auto& parentGroup = hierarchy.at(1).cgroup;
+            auto snapOfApp =
+                group.section('/', -1).startsWith("snap.") && parentGroup.section('/', -1).startsWith("app-");
+            if (parentGroup == hierarchy.at(2).cgroup || snapOfApp) {
+                group = parentGroup;
+            }
         }
         int depth = 0;
         for (int i = 1; i < hierarchy.size(); ++i) {
