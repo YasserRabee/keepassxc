@@ -218,7 +218,7 @@ namespace FdoSecrets
          * Remember the user's decisions for later clients that run the same executable and that
          * the same, still running, process starts the same way, through the same executables.
          * That process is the client's hierarchy[@a depth] in @a info: 0 is the client's process
-         * itself, up to PeerInfo::maxRememberDepth(). The client may have disconnected already.
+         * itself, up to PeerInfo::maxIdentifiedDepth(). The client may have disconnected already.
          * Only remembered (not once) decisions are kept. Nothing is saved to disk.
          */
         void rememberForAncestor(const PeerInfo& info,
